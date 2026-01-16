@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Call Synthesis — Transcription iOS + OpenAI</title>
+    <meta
+      name="description"
+      content="Transcrivez vos mémos vocaux iOS avec l'API OpenAI, gérez la taille des fichiers et suivez l'usage des tokens."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="bg-orbit"></div>
+    <div class="bg-orbit second"></div>
+    <header class="hero">
+      <div class="brand">
+        <span class="brand-dot"></span>
+        <span>Call Synthesis</span>
+      </div>
+      <div class="hero-text">
+        <h1>Votre dictaphone iOS, une transcription claire et instantanée.</h1>
+        <p>
+          Importez vos fichiers depuis Fichiers, utilisez votre propre clé OpenAI, et obtenez une
+          transcription complète avec suivi des tokens. Tout reste dans votre navigateur.
+        </p>
+      </div>
+      <div class="hero-meta">
+        <div>
+          <span class="meta-title">Hébergé sur GitHub Pages</span>
+          <span class="meta-detail">Aucune infra serveur nécessaire</span>
+        </div>
+        <div>
+          <span class="meta-title">Limite OpenAI</span>
+          <span class="meta-detail">25 Mo par fichier, gestion auto</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="panel config">
+        <div class="panel-header">
+          <h2>Configuration</h2>
+          <p>Vos clés ne quittent pas votre navigateur.</p>
+        </div>
+        <label class="field">
+          <span>Clé API OpenAI</span>
+          <input
+            type="password"
+            id="apiKey"
+            autocomplete="off"
+            placeholder="sk-..."
+            spellcheck="false"
+          />
+        </label>
+        <div class="row">
+          <label class="toggle">
+            <input type="checkbox" id="rememberKey" />
+            <span>Mémoriser sur cet appareil</span>
+          </label>
+          <button class="ghost" id="clearKey">Effacer</button>
+        </div>
+        <label class="field">
+          <span>Modèle</span>
+          <select id="model">
+            <option value="gpt-4o-mini-transcribe">gpt-4o-mini-transcribe</option>
+            <option value="gpt-4o-transcribe">gpt-4o-transcribe</option>
+            <option value="whisper-1">whisper-1</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Langue (optionnel)</span>
+          <input type="text" id="language" placeholder="fr, en, es..." />
+        </label>
+        <div class="notice">
+          <strong>Conseil</strong> : pour un meilleur résultat, utilisez un fichier clair et peu
+          bruité. Les fichiers > 25 Mo seront rééchantillonnés et découpés automatiquement.
+        </div>
+      </section>
+
+      <section class="panel upload">
+        <div class="panel-header">
+          <h2>Importer un fichier audio</h2>
+          <p>Formats acceptés : m4a, mp3, wav, mp4, webm.</p>
+        </div>
+        <div class="dropzone" id="dropzone">
+          <input type="file" id="fileInput" accept="audio/*" />
+          <div class="drop-content">
+            <div class="drop-icon">⬆</div>
+            <div>
+              <strong>Glissez votre fichier</strong>
+              <span>ou cliquez pour sélectionner</span>
+            </div>
+          </div>
+        </div>
+        <div class="file-meta" id="fileMeta">
+          <span>Aucun fichier chargé.</span>
+        </div>
+        <audio id="audioPreview" controls hidden></audio>
+        <button class="primary" id="transcribeBtn" disabled>Transcrire le call</button>
+      </section>
+
+      <section class="panel status">
+        <div class="panel-header">
+          <h2>Statut &amp; usage</h2>
+          <p>Suivi en temps réel du traitement et des tokens.</p>
+        </div>
+        <div class="status-log" id="statusLog">
+          <div class="status-line idle">En attente d'un fichier.</div>
+        </div>
+        <div class="stats">
+          <div>
+            <span class="stat-label">Tokens input</span>
+            <span class="stat-value" id="tokensInput">—</span>
+          </div>
+          <div>
+            <span class="stat-label">Tokens output</span>
+            <span class="stat-value" id="tokensOutput">—</span>
+          </div>
+          <div>
+            <span class="stat-label">Total</span>
+            <span class="stat-value" id="tokensTotal">—</span>
+          </div>
+          <div>
+            <span class="stat-label">Estimation</span>
+            <span class="stat-value" id="tokensEstimate">—</span>
+          </div>
+        </div>
+        <div class="hint" id="usageHint">L'estimation se base sur le texte si l'API ne renvoie pas l'usage.</div>
+      </section>
+
+      <section class="panel output">
+        <div class="panel-header">
+          <h2>Transcription</h2>
+          <p>Le texte complet s'affiche ici.</p>
+        </div>
+        <textarea id="transcript" placeholder="La transcription apparaîtra ici..." readonly></textarea>
+        <div class="row end">
+          <button class="ghost" id="copyBtn">Copier</button>
+          <button class="ghost" id="downloadBtn">Télécharger</button>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div>
+        <span>Vos fichiers ne sont pas stockés.</span>
+        <span>Tout passe directement vers l'API OpenAI.</span>
+      </div>
+      <div>
+        <span>Astuce : partagez ce site via GitHub Pages.</span>
+      </div>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>
