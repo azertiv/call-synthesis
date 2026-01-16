@@ -79,31 +79,13 @@
           <span>Langue (optionnel)</span>
           <input type="text" id="language" placeholder="fr, en, es..." />
         </label>
-        <label class="field">
-          <span>Mode &gt; 25 Mo</span>
-          <select id="largeFileMode">
-            <option value="ffmpeg-copy" selected>FFmpeg : découpe rapide sans ré-encodage</option>
-            <option value="ffmpeg-encode">FFmpeg : ré-encodage rapide</option>
-            <option value="mediarecorder">Temps réel (MediaRecorder)</option>
-            <option value="wav">WAV rapide (beaucoup de segments)</option>
-          </select>
-        </label>
-        <label class="field">
-          <span>Débit cible (si ré-encodage)</span>
-          <select id="compression">
-            <option value="256">Opus/AAC 256 kbit/s (qualité haute)</option>
-            <option value="128" selected>Opus/AAC 128 kbit/s (standard)</option>
-            <option value="96">Opus/AAC 96 kbit/s (compact)</option>
-            <option value="64">Opus/AAC 64 kbit/s (très compact)</option>
-          </select>
-        </label>
         <div class="hint">
-          Le mode FFmpeg utilise le CPU local (pas de backend) et peut être bien plus rapide que
-          le temps réel. MediaRecorder reste en temps réel. Premier chargement FFmpeg : ~32 Mo.
+          Les fichiers &gt; 25 Mo sont découpés par FFmpeg sans ré-encodage (CPU local, pas de backend).
+          Premier chargement FFmpeg : ~32 Mo.
         </div>
         <div class="notice">
           <strong>Conseil</strong> : pour un meilleur résultat, utilisez un fichier clair et peu
-          bruité. Les fichiers > 25 Mo seront traités selon le mode choisi, puis découpés si besoin.
+          bruité. Les fichiers &gt; 25 Mo seront découpés automatiquement (sans ré-encodage).
         </div>
       </section>
 
@@ -128,7 +110,7 @@
         <audio id="audioPreview" controls hidden></audio>
         <div class="row">
           <button class="primary" id="transcribeBtn" disabled>Transcrire le call</button>
-          <button class="ghost" id="testBtn" disabled>Tester compression</button>
+          <button class="ghost" id="testBtn" disabled>Tester découpage</button>
         </div>
       </section>
 
