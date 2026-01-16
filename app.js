@@ -2,6 +2,13 @@ const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const SAFE_CHUNK_BYTES = 24 * 1024 * 1024;
 const TARGET_SAMPLE_RATE = 16000;
 const WAV_HEADER_BYTES = 44;
+const COMPRESSION_MIME_TYPES = [
+  "audio/webm;codecs=opus",
+  "audio/webm",
+  "audio/mp4",
+  "audio/aac",
+];
+const COMPRESSION_SAFETY = 0.9;
 const STORAGE_KEY = "callSynthesis.apiKey";
 const STORAGE_REMEMBER = "callSynthesis.remember";
 
@@ -11,6 +18,7 @@ const elements = {
   clearKey: document.getElementById("clearKey"),
   model: document.getElementById("model"),
   language: document.getElementById("language"),
+  compression: document.getElementById("compression"),
   dropzone: document.getElementById("dropzone"),
   fileInput: document.getElementById("fileInput"),
   fileMeta: document.getElementById("fileMeta"),
@@ -44,6 +52,16 @@ function formatBytes(bytes) {
     idx += 1;
   }
   return `${size.toFixed(size >= 10 || idx === 0 ? 0 : 1)} ${units[idx]}`;
+}
+
+function formatDuration(seconds) {
+  if (!Number.isFinite(seconds)) return "—";
+  if (seconds < 60) return `${Math.round(seconds)} s`;
+  const minutesTotal = Math.round(seconds / 60);
+  if (minutesTotal < 60) return `${minutesTotal} min`;
+  const hours = Math.floor(minutesTotal / 60);
+  const minutes = minutesTotal % 60;
+  return `${hours} h ${minutes} min`;
 }
 
 function setStatus(message, isIdle = false) {
@@ -118,6 +136,44 @@ function resolveResponseFormat(model) {
   return "json";
 }
 
+function getCompressionSettings() {
+  const value = elements.compression?.value ?? "off";
+  if (!value || value === "off") {
+    return { enabled: false };
+  }
+  const bitrateKbps = Number(value);
+  if (!Number.isFinite(bitrateKbps) || bitrateKbps <= 0) {
+    return { enabled: false };
+  }
+  return {
+    enabled: true,
+    bitrate: bitrateKbps * 1000,
+    label: `${bitrateKbps} kbit/s`,
+  };
+}
+
+function pickCompressionMimeType() {
+  if (typeof MediaRecorder === "undefined") return null;
+  if (typeof MediaRecorder.isTypeSupported !== "function") {
+    return "audio/webm";
+  }
+  for (const type of COMPRESSION_MIME_TYPES) {
+    if (MediaRecorder.isTypeSupported(type)) {
+      return type;
+    }
+  }
+  return null;
+}
+
+function extensionFromMimeType(mimeType) {
+  const base = (mimeType || "audio/webm").split(";")[0];
+  if (base.endsWith("webm")) return "webm";
+  if (base.endsWith("mp4")) return "m4a";
+  if (base.endsWith("aac")) return "aac";
+  if (base.endsWith("mpeg")) return "mp3";
+  return "webm";
+}
+
 function writeString(view, offset, value) {
   for (let i = 0; i < value.length; i += 1) {
     view.setUint8(offset + i, value.charCodeAt(i));
@@ -151,6 +207,143 @@ function encodeWav(samples, sampleRate) {
   return buffer;
 }
 
+async function recordSegment(audioContext, buffer, startTime, duration, mimeType, bitrate) {
+  await audioContext.resume();
+  return new Promise((resolve, reject) => {
+    const destination = audioContext.createMediaStreamDestination();
+    const source = audioContext.createBufferSource();
+    const mute = audioContext.createGain();
+    mute.gain.value = 0;
+    source.buffer = buffer;
+    source.connect(destination);
+    source.connect(mute);
+    mute.connect(audioContext.destination);
+
+    const options = {};
+    if (mimeType) {
+      options.mimeType = mimeType;
+    }
+    if (bitrate) {
+      options.audioBitsPerSecond = bitrate;
+    }
+
+    let recorder;
+    try {
+      recorder = new MediaRecorder(destination.stream, options);
+    } catch (error) {
+      reject(error);
+      return;
+    }
+
+    const chunks = [];
+    recorder.ondataavailable = (event) => {
+      if (event.data && event.data.size > 0) {
+        chunks.push(event.data);
+      }
+    };
+    recorder.onerror = (event) => {
+      reject(event.error || new Error("Erreur MediaRecorder."));
+    };
+    recorder.onstop = () => {
+      source.disconnect();
+      mute.disconnect();
+      destination.disconnect();
+      const resolvedType = recorder.mimeType || mimeType || "audio/webm";
+      resolve({
+        blob: new Blob(chunks, { type: resolvedType }),
+        mimeType: resolvedType,
+      });
+    };
+
+    const safeDuration = Math.max(0.01, duration);
+    source.onended = () => {
+      if (recorder.state !== "inactive") {
+        recorder.stop();
+      }
+    };
+
+    recorder.start();
+    source.start(0, startTime, safeDuration);
+  });
+}
+
+async function compressAndSegment(file, compression, mimeType) {
+  const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  audioContext.resume().catch(() => {});
+  const arrayBuffer = await file.arrayBuffer();
+  let decoded;
+  try {
+    decoded = await audioContext.decodeAudioData(arrayBuffer);
+  } catch (error) {
+    if (audioContext.close) {
+      await audioContext.close();
+    }
+    throw error;
+  }
+
+  const duration = decoded.duration || 0;
+  if (!Number.isFinite(duration) || duration <= 0) {
+    if (audioContext.close) {
+      await audioContext.close();
+    }
+    throw new Error("Durée audio invalide.");
+  }
+  const maxSegmentSeconds = Math.max(
+    1,
+    Math.floor((SAFE_CHUNK_BYTES * 8 * COMPRESSION_SAFETY) / compression.bitrate),
+  );
+  const segmentCount = Math.max(1, Math.ceil(duration / maxSegmentSeconds));
+  const segmentDuration = duration / segmentCount;
+
+  setStatus(
+    `Compression ${compression.label} en temps réel (~${formatDuration(duration)}).`,
+  );
+
+  const chunks = [];
+  try {
+    for (let i = 0; i < segmentCount; i += 1) {
+      const start = i * segmentDuration;
+      const length = i === segmentCount - 1 ? duration - start : segmentDuration;
+      setStatus(
+        `Compression segment ${i + 1}/${segmentCount} (~${formatDuration(length)})…`,
+      );
+      const result = await recordSegment(
+        audioContext,
+        decoded,
+        start,
+        length,
+        mimeType,
+        compression.bitrate,
+      );
+      if (result.blob.size > MAX_FILE_BYTES) {
+        throw new Error(
+          "Segment compressé trop volumineux. Réduisez le débit ou utilisez la découpe WAV.",
+        );
+      }
+      chunks.push({
+        blob: result.blob,
+        index: i + 1,
+        extension: extensionFromMimeType(result.mimeType),
+      });
+    }
+  } finally {
+    if (audioContext.close) {
+      await audioContext.close();
+    }
+  }
+
+  const totalSize = chunks.reduce((sum, chunk) => sum + chunk.blob.size, 0);
+  setStatus(
+    `Préparation terminée : ${chunks.length} segment(s) · ${formatBytes(totalSize)}.`,
+  );
+  return {
+    chunks,
+    totalSize,
+    usedOriginal: false,
+    usedCompression: true,
+  };
+}
+
 async function downsampleAndChunk(file) {
   setStatus("Fichier > 25 Mo : rééchantillonnage 16kHz mono en cours…");
   const arrayBuffer = await file.arrayBuffer();
@@ -182,7 +375,7 @@ async function downsampleAndChunk(file) {
     const slice = samples.subarray(offset, end);
     const wavBuffer = encodeWav(slice, rendered.sampleRate);
     const blob = new Blob([wavBuffer], { type: "audio/wav" });
-    chunks.push({ blob, index });
+    chunks.push({ blob, index, extension: "wav" });
     offset = end;
     index += 1;
   }
@@ -203,9 +396,28 @@ async function prepareFile(file) {
     };
   }
 
+  const compression = getCompressionSettings();
+  if (compression.enabled) {
+    const mimeType = pickCompressionMimeType();
+    if (mimeType === null) {
+      setStatus("Compression indisponible sur ce navigateur, bascule en WAV.");
+    } else {
+      try {
+        return await compressAndSegment(file, compression, mimeType);
+      } catch (error) {
+        setStatus("Compression échouée, bascule en WAV.");
+        const message = error instanceof Error ? error.message : String(error);
+        setStatus(message);
+      }
+    }
+  } else {
+    setStatus("Compression désactivée, conversion WAV.");
+  }
+
   return {
     ...(await downsampleAndChunk(file)),
     usedOriginal: false,
+    usedCompression: false,
   };
 }
 
@@ -249,9 +461,10 @@ async function transcribe() {
       setStatus(`Transcription segment ${i + 1}/${chunks.length}…`);
 
       const formData = new FormData();
+      const extension = chunk.extension || "wav";
       const filename = chunk.isOriginal && file.name
         ? file.name
-        : `${baseName}-part-${String(chunk.index).padStart(2, "0")}.wav`;
+        : `${baseName}-part-${String(chunk.index).padStart(2, "0")}.${extension}`;
       formData.append("file", chunk.blob, filename);
       formData.append("model", model);
       formData.append("response_format", resolveResponseFormat(model));

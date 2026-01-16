@@ -78,9 +78,23 @@
           <span>Langue (optionnel)</span>
           <input type="text" id="language" placeholder="fr, en, es..." />
         </label>
+        <label class="field">
+          <span>Compression si &gt; 25 Mo</span>
+          <select id="compression">
+            <option value="off">Désactivée (WAV rapide)</option>
+            <option value="256">Opus/AAC 256 kbit/s (qualité haute)</option>
+            <option value="128" selected>Opus/AAC 128 kbit/s (standard)</option>
+            <option value="96">Opus/AAC 96 kbit/s (compact)</option>
+            <option value="64">Opus/AAC 64 kbit/s (très compact)</option>
+          </select>
+        </label>
+        <div class="hint">
+          La compression se fait en temps réel (durée du fichier). Si elle n'est pas supportée,
+          le site bascule en WAV.
+        </div>
         <div class="notice">
           <strong>Conseil</strong> : pour un meilleur résultat, utilisez un fichier clair et peu
-          bruité. Les fichiers > 25 Mo seront rééchantillonnés et découpés automatiquement.
+          bruité. Les fichiers > 25 Mo seront compressés si possible, puis découpés si besoin.
         </div>
       </section>
 
