@@ -156,6 +156,12 @@ textarea {
   font-family: inherit;
 }
 
+.field select:disabled,
+.field input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 textarea {
   min-height: 260px;
   resize: vertical;

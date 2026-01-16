@@ -80,9 +80,17 @@
           <input type="text" id="language" placeholder="fr, en, es..." />
         </label>
         <label class="field">
-          <span>Compression si &gt; 25 Mo</span>
+          <span>Mode &gt; 25 Mo</span>
+          <select id="largeFileMode">
+            <option value="ffmpeg-copy" selected>FFmpeg : découpe rapide sans ré-encodage</option>
+            <option value="ffmpeg-encode">FFmpeg : ré-encodage rapide</option>
+            <option value="mediarecorder">Temps réel (MediaRecorder)</option>
+            <option value="wav">WAV rapide (beaucoup de segments)</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Débit cible (si ré-encodage)</span>
           <select id="compression">
-            <option value="off">Désactivée (WAV rapide)</option>
             <option value="256">Opus/AAC 256 kbit/s (qualité haute)</option>
             <option value="128" selected>Opus/AAC 128 kbit/s (standard)</option>
             <option value="96">Opus/AAC 96 kbit/s (compact)</option>
@@ -90,12 +98,12 @@
           </select>
         </label>
         <div class="hint">
-          La compression se fait en temps réel (durée du fichier). Si elle n'est pas supportée,
-          le site bascule en WAV.
+          Le mode FFmpeg utilise le CPU local (pas de backend) et peut être bien plus rapide que
+          le temps réel. MediaRecorder reste en temps réel.
         </div>
         <div class="notice">
           <strong>Conseil</strong> : pour un meilleur résultat, utilisez un fichier clair et peu
-          bruité. Les fichiers > 25 Mo seront compressés si possible, puis découpés si besoin.
+          bruité. Les fichiers > 25 Mo seront traités selon le mode choisi, puis découpés si besoin.
         </div>
       </section>
 
@@ -118,7 +126,10 @@
           <span>Aucun fichier chargé.</span>
         </div>
         <audio id="audioPreview" controls hidden></audio>
-        <button class="primary" id="transcribeBtn" disabled>Transcrire le call</button>
+        <div class="row">
+          <button class="primary" id="transcribeBtn" disabled>Transcrire le call</button>
+          <button class="ghost" id="testBtn" disabled>Tester compression</button>
+        </div>
       </section>
 
       <section class="panel status">
@@ -178,6 +189,6 @@
       </div>
     </footer>
 
-    <script src="app.js"></script>
+    <script type="module" src="app.js"></script>
   </body>
 </html>

@@ -2,13 +2,21 @@ const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const SAFE_CHUNK_BYTES = 24 * 1024 * 1024;
 const TARGET_SAMPLE_RATE = 16000;
 const WAV_HEADER_BYTES = 44;
+const COMPRESSION_SAFETY = 0.9;
+const COPY_SAFETY = 0.85;
 const COMPRESSION_MIME_TYPES = [
   "audio/webm;codecs=opus",
   "audio/webm",
   "audio/mp4",
   "audio/aac",
 ];
-const COMPRESSION_SAFETY = 0.9;
+const FFMPEG_VERSION = "0.12.6";
+const FFMPEG_UTIL_VERSION = "0.12.0";
+const FFMPEG_JS_URL = `https://unpkg.com/@ffmpeg/ffmpeg@${FFMPEG_VERSION}/dist/esm/index.js`;
+const FFMPEG_UTIL_URL = `https://unpkg.com/@ffmpeg/util@${FFMPEG_UTIL_VERSION}/dist/esm/index.js`;
+const FFMPEG_CORE_BASE = `https://unpkg.com/@ffmpeg/core@${FFMPEG_VERSION}/dist/esm`;
+const FFMPEG_CORE_URL = `${FFMPEG_CORE_BASE}/ffmpeg-core.js`;
+const FFMPEG_WASM_URL = `${FFMPEG_CORE_BASE}/ffmpeg-core.wasm`;
 const STORAGE_KEY = "callSynthesis.apiKey";
 const STORAGE_REMEMBER = "callSynthesis.remember";
 const PRICE_PER_MILLION = 1_000_000;
@@ -37,12 +45,14 @@ const elements = {
   model: document.getElementById("model"),
   modelPriceHint: document.getElementById("modelPriceHint"),
   language: document.getElementById("language"),
+  largeFileMode: document.getElementById("largeFileMode"),
   compression: document.getElementById("compression"),
   dropzone: document.getElementById("dropzone"),
   fileInput: document.getElementById("fileInput"),
   fileMeta: document.getElementById("fileMeta"),
   audioPreview: document.getElementById("audioPreview"),
   transcribeBtn: document.getElementById("transcribeBtn"),
+  testBtn: document.getElementById("testBtn"),
   statusLog: document.getElementById("statusLog"),
   transcript: document.getElementById("transcript"),
   copyBtn: document.getElementById("copyBtn"),
@@ -63,6 +73,13 @@ const state = {
   usageSeen: false,
   durationSeconds: null,
   activeModel: null,
+  processing: false,
+};
+
+const ffmpegState = {
+  instance: null,
+  util: null,
+  loading: null,
 };
 
 function formatBytes(bytes) {
@@ -97,6 +114,15 @@ function setStatus(message, isIdle = false) {
 
 function clearStatus() {
   elements.statusLog.innerHTML = "";
+}
+
+function setProcessing(isProcessing) {
+  state.processing = isProcessing;
+  const hasFile = Boolean(state.file);
+  elements.transcribeBtn.disabled = isProcessing || !hasFile;
+  if (elements.testBtn) {
+    elements.testBtn.disabled = isProcessing || !hasFile;
+  }
 }
 
 function setTokens({ input, output, total, estimate }) {
@@ -248,7 +274,7 @@ function setFile(file) {
   state.activeModel = null;
   state.usage = { input: 0, output: 0, total: 0 };
   state.usageSeen = false;
-  elements.transcribeBtn.disabled = !file;
+  setProcessing(state.processing);
   elements.transcript.value = "";
   setTokens({ input: "—", output: "—", total: "—", estimate: "—" });
   updateUsageHint();
@@ -287,19 +313,25 @@ function resolveResponseFormat(model) {
 }
 
 function getCompressionSettings() {
-  const value = elements.compression?.value ?? "off";
-  if (!value || value === "off") {
-    return { enabled: false };
-  }
+  const value = elements.compression?.value ?? "128";
   const bitrateKbps = Number(value);
-  if (!Number.isFinite(bitrateKbps) || bitrateKbps <= 0) {
-    return { enabled: false };
-  }
+  const fallback = 128;
+  const safeKbps = Number.isFinite(bitrateKbps) && bitrateKbps > 0 ? bitrateKbps : fallback;
   return {
-    enabled: true,
-    bitrate: bitrateKbps * 1000,
-    label: `${bitrateKbps} kbit/s`,
+    bitrate: safeKbps * 1000,
+    label: `${safeKbps} kbit/s`,
   };
+}
+
+function getLargeFileMode() {
+  return elements.largeFileMode?.value || "ffmpeg-copy";
+}
+
+function updateCompressionControls() {
+  if (!elements.compression || !elements.largeFileMode) return;
+  const mode = getLargeFileMode();
+  const usesBitrate = mode === "ffmpeg-encode" || mode === "mediarecorder";
+  elements.compression.disabled = !usesBitrate;
 }
 
 function pickCompressionMimeType() {
@@ -322,6 +354,120 @@ function extensionFromMimeType(mimeType) {
   if (base.endsWith("aac")) return "aac";
   if (base.endsWith("mpeg")) return "mp3";
   return "webm";
+}
+
+function mimeFromExtension(extension) {
+  const ext = extension.toLowerCase();
+  if (ext === "m4a" || ext === "mp4") return "audio/mp4";
+  if (ext === "aac") return "audio/aac";
+  if (ext === "mp3") return "audio/mpeg";
+  if (ext === "wav") return "audio/wav";
+  if (ext === "webm") return "audio/webm";
+  return "audio/webm";
+}
+
+function getFileExtension(file) {
+  const name = file?.name || "";
+  const match = name.match(/\.([a-z0-9]+)$/i);
+  if (match) {
+    return match[1].toLowerCase();
+  }
+  if (file?.type) {
+    return extensionFromMimeType(file.type);
+  }
+  return "m4a";
+}
+
+function getDurationFromMetadata(file) {
+  return new Promise((resolve, reject) => {
+    const audio = document.createElement("audio");
+    const url = URL.createObjectURL(file);
+    let settled = false;
+
+    const cleanup = () => {
+      if (settled) return;
+      settled = true;
+      audio.src = "";
+      audio.removeAttribute("src");
+      URL.revokeObjectURL(url);
+    };
+
+    audio.preload = "metadata";
+    audio.onloadedmetadata = () => {
+      const duration = audio.duration;
+      cleanup();
+      if (Number.isFinite(duration) && duration > 0) {
+        resolve(duration);
+      } else {
+        reject(new Error("Durée audio inconnue."));
+      }
+    };
+    audio.onerror = () => {
+      cleanup();
+      reject(new Error("Impossible de lire les métadonnées audio."));
+    };
+    audio.src = url;
+  });
+}
+
+async function getAudioDuration(file) {
+  if (state.file === file && Number.isFinite(state.durationSeconds)) {
+    return state.durationSeconds;
+  }
+  try {
+    const duration = await getDurationFromMetadata(file);
+    if (state.file === file) {
+      state.durationSeconds = duration;
+      updatePriceDisplay();
+    }
+    return duration;
+  } catch (error) {
+    const arrayBuffer = await file.arrayBuffer();
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    try {
+      const decoded = await audioContext.decodeAudioData(arrayBuffer);
+      const duration = decoded.duration;
+      if (state.file === file) {
+        state.durationSeconds = Number.isFinite(duration) ? duration : null;
+        updatePriceDisplay();
+      }
+      return duration;
+    } finally {
+      if (audioContext.close) {
+        audioContext.close();
+      }
+    }
+  }
+}
+
+async function loadFfmpeg() {
+  if (ffmpegState.instance) {
+    return ffmpegState;
+  }
+  if (ffmpegState.loading) {
+    return ffmpegState.loading;
+  }
+  ffmpegState.loading = (async () => {
+    try {
+      setStatus("Chargement de FFmpeg.wasm (~32 Mo)...");
+      const [{ FFmpeg }, util] = await Promise.all([
+        import(FFMPEG_JS_URL),
+        import(FFMPEG_UTIL_URL),
+      ]);
+      const ffmpeg = new FFmpeg();
+      const coreURL = await util.toBlobURL(FFMPEG_CORE_URL, "text/javascript");
+      const wasmURL = await util.toBlobURL(FFMPEG_WASM_URL, "application/wasm");
+      await ffmpeg.load({ coreURL, wasmURL });
+      ffmpegState.instance = ffmpeg;
+      ffmpegState.util = util;
+      ffmpegState.loading = null;
+      return ffmpegState;
+    } catch (error) {
+      ffmpegState.loading = null;
+      throw error;
+    }
+  })();
+  return ffmpegState.loading;
 }
 
 function writeString(view, offset, value) {
@@ -494,6 +640,199 @@ async function compressAndSegment(file, compression, mimeType) {
   };
 }
 
+async function readFfmpegSegments(ffmpeg, prefix, extension, mimeType) {
+  const entries = await ffmpeg.listDir("/");
+  const names = entries
+    .map((entry) => entry.name)
+    .filter((name) => name.startsWith(prefix) && name.endsWith(`.${extension}`))
+    .sort();
+
+  if (!names.length) {
+    throw new Error("FFmpeg n'a retourné aucun segment.");
+  }
+
+  const chunks = [];
+  for (let i = 0; i < names.length; i += 1) {
+    const name = names[i];
+    const data = await ffmpeg.readFile(name);
+    chunks.push({
+      blob: new Blob([data], { type: mimeType }),
+      index: i + 1,
+      extension,
+    });
+    await ffmpeg.deleteFile(name);
+  }
+  return chunks;
+}
+
+async function clearFfmpegSegments(ffmpeg, prefix) {
+  const entries = await ffmpeg.listDir("/");
+  const names = entries
+    .map((entry) => entry.name)
+    .filter((name) => name.startsWith(prefix));
+  for (const name of names) {
+    try {
+      await ffmpeg.deleteFile(name);
+    } catch (error) {
+      // Ignore deletion failures.
+    }
+  }
+}
+
+async function ffmpegCopySegment(file) {
+  setStatus("FFmpeg : découpe rapide sans ré-encodage.");
+  const { instance: ffmpeg, util } = await loadFfmpeg();
+  const duration = await getAudioDuration(file);
+  if (!Number.isFinite(duration) || duration <= 0) {
+    throw new Error("Durée audio invalide.");
+  }
+
+  const inputExtension = getFileExtension(file);
+  const inputName = `input.${inputExtension}`;
+  const outputPrefix = "segment";
+  const outputExtension = inputExtension;
+  const outputPattern = `${outputPrefix}-%03d.${outputExtension}`;
+
+  await ffmpeg.writeFile(inputName, await util.fetchFile(file));
+
+  const estimatedBitrate = (file.size * 8) / duration;
+  const maxSegmentSeconds = Math.max(
+    1,
+    Math.floor((SAFE_CHUNK_BYTES * 8 * COPY_SAFETY) / estimatedBitrate),
+  );
+  const sizeBasedCount = Math.ceil(file.size / (SAFE_CHUNK_BYTES * COPY_SAFETY));
+  const timeBasedCount = Math.max(1, Math.ceil(duration / maxSegmentSeconds));
+  const segmentCount = Math.max(sizeBasedCount, timeBasedCount);
+  const segmentDuration = duration / segmentCount;
+
+  setStatus(
+    `Découpe FFmpeg : ${segmentCount} segment(s) d'env. ${formatDuration(segmentDuration)}.`,
+  );
+
+  try {
+    await clearFfmpegSegments(ffmpeg, outputPrefix);
+    await ffmpeg.exec([
+      "-i",
+      inputName,
+      "-map",
+      "0:a",
+      "-c",
+      "copy",
+      "-f",
+      "segment",
+      "-segment_time",
+      `${segmentDuration}`,
+      "-reset_timestamps",
+      "1",
+      outputPattern,
+    ]);
+  } finally {
+    try {
+      await ffmpeg.deleteFile(inputName);
+    } catch (error) {
+      // Ignore cleanup failures.
+    }
+  }
+
+  const mimeType = mimeFromExtension(outputExtension);
+  const chunks = await readFfmpegSegments(ffmpeg, outputPrefix, outputExtension, mimeType);
+  const totalSize = chunks.reduce((sum, chunk) => sum + chunk.blob.size, 0);
+  const oversized = chunks.find((chunk) => chunk.blob.size > MAX_FILE_BYTES);
+  if (oversized) {
+    throw new Error("Un segment dépasse 25 Mo. Essayez le ré-encodage FFmpeg.");
+  }
+
+  setStatus(
+    `Préparation terminée : ${chunks.length} segment(s) · ${formatBytes(totalSize)}.`,
+  );
+  return {
+    chunks,
+    totalSize,
+    usedOriginal: false,
+    usedCompression: true,
+    method: "ffmpeg-copy",
+  };
+}
+
+async function ffmpegReencodeSegment(file, compression) {
+  setStatus("FFmpeg : ré-encodage rapide.");
+  const { instance: ffmpeg, util } = await loadFfmpeg();
+  const duration = await getAudioDuration(file);
+  if (!Number.isFinite(duration) || duration <= 0) {
+    throw new Error("Durée audio invalide.");
+  }
+
+  const inputExtension = getFileExtension(file);
+  const inputName = `input.${inputExtension}`;
+  const outputPrefix = "segment";
+  const outputExtension = "m4a";
+  const outputPattern = `${outputPrefix}-%03d.${outputExtension}`;
+
+  await ffmpeg.writeFile(inputName, await util.fetchFile(file));
+
+  const maxSegmentSeconds = Math.max(
+    1,
+    Math.floor((SAFE_CHUNK_BYTES * 8 * COMPRESSION_SAFETY) / compression.bitrate),
+  );
+  const segmentCount = Math.max(1, Math.ceil(duration / maxSegmentSeconds));
+  const segmentDuration = duration / segmentCount;
+
+  setStatus(
+    `Ré-encodage ${compression.label} : ${segmentCount} segment(s) d'env. ${formatDuration(
+      segmentDuration,
+    )}.`,
+  );
+
+  try {
+    await clearFfmpegSegments(ffmpeg, outputPrefix);
+    await ffmpeg.exec([
+      "-i",
+      inputName,
+      "-vn",
+      "-ac",
+      "1",
+      "-ar",
+      `${TARGET_SAMPLE_RATE}`,
+    "-c:a",
+    "aac",
+      "-b:a",
+      `${Math.round(compression.bitrate / 1000)}k`,
+      "-f",
+      "segment",
+      "-segment_time",
+      `${segmentDuration}`,
+      "-reset_timestamps",
+      "1",
+      outputPattern,
+    ]);
+  } finally {
+    try {
+      await ffmpeg.deleteFile(inputName);
+    } catch (error) {
+      // Ignore cleanup failures.
+    }
+  }
+
+  const mimeType = mimeFromExtension(outputExtension);
+  const chunks = await readFfmpegSegments(ffmpeg, outputPrefix, outputExtension, mimeType);
+  const totalSize = chunks.reduce((sum, chunk) => sum + chunk.blob.size, 0);
+  const oversized = chunks.find((chunk) => chunk.blob.size > MAX_FILE_BYTES);
+  if (oversized) {
+    throw new Error("Un segment dépasse 25 Mo. Réduisez le débit.");
+  }
+
+  setStatus(
+    `Préparation terminée : ${chunks.length} segment(s) · ${formatBytes(totalSize)}.`,
+  );
+  return {
+    chunks,
+    totalSize,
+    usedOriginal: false,
+    usedCompression: true,
+    method: "ffmpeg-encode",
+  };
+}
+
 async function downsampleAndChunk(file) {
   setStatus("Fichier > 25 Mo : rééchantillonnage 16kHz mono en cours…");
   const arrayBuffer = await file.arrayBuffer();
@@ -546,22 +885,47 @@ async function prepareFile(file) {
     };
   }
 
+  const mode = getLargeFileMode();
   const compression = getCompressionSettings();
-  if (compression.enabled) {
+
+  if (mode === "ffmpeg-copy") {
+    try {
+      return await ffmpegCopySegment(file);
+    } catch (error) {
+      setStatus("Découpe FFmpeg impossible, tentative de ré-encodage.");
+      const message = error instanceof Error ? error.message : String(error);
+      setStatus(message);
+      try {
+        return await ffmpegReencodeSegment(file, compression);
+      } catch (innerError) {
+        setStatus("Ré-encodage FFmpeg échoué, bascule en WAV.");
+        const innerMessage = innerError instanceof Error ? innerError.message : String(innerError);
+        setStatus(innerMessage);
+      }
+    }
+  } else if (mode === "ffmpeg-encode") {
+    try {
+      return await ffmpegReencodeSegment(file, compression);
+    } catch (error) {
+      setStatus("Ré-encodage FFmpeg échoué, bascule en WAV.");
+      const message = error instanceof Error ? error.message : String(error);
+      setStatus(message);
+    }
+  } else if (mode === "mediarecorder") {
     const mimeType = pickCompressionMimeType();
     if (mimeType === null) {
-      setStatus("Compression indisponible sur ce navigateur, bascule en WAV.");
+      setStatus("MediaRecorder indisponible, bascule en WAV.");
     } else {
       try {
         return await compressAndSegment(file, compression, mimeType);
       } catch (error) {
-        setStatus("Compression échouée, bascule en WAV.");
+        setStatus("Compression temps réel échouée, bascule en WAV.");
         const message = error instanceof Error ? error.message : String(error);
         setStatus(message);
       }
     }
   } else {
-    setStatus("Compression désactivée, conversion WAV.");
+    setStatus("Mode WAV sélectionné.");
   }
 
   return {
@@ -589,7 +953,7 @@ async function transcribe() {
   }
 
   state.activeModel = model;
-  elements.transcribeBtn.disabled = true;
+  setProcessing(true);
   elements.transcribeBtn.textContent = "Traitement...";
   elements.transcript.value = "";
   setTokens({ input: "—", output: "—", total: "—", estimate: "—" });
@@ -689,8 +1053,40 @@ async function transcribe() {
     const message = error instanceof Error ? error.message : String(error);
     setStatus(message);
   } finally {
-    elements.transcribeBtn.disabled = !state.file;
+    setProcessing(false);
     elements.transcribeBtn.textContent = "Transcrire le call";
+  }
+}
+
+async function testCompression() {
+  const file = state.file;
+  if (!file) {
+    clearStatus();
+    setStatus("Veuillez sélectionner un fichier audio.");
+    return;
+  }
+
+  setProcessing(true);
+  if (elements.testBtn) {
+    elements.testBtn.textContent = "Test en cours...";
+  }
+  clearStatus();
+  setStatus("Test compression/segmentation (aucun appel API).");
+
+  try {
+    const { chunks, totalSize } = await prepareFile(file);
+    setStatus(
+      `Test terminé : ${chunks.length} segment(s) · ${formatBytes(totalSize)}.`,
+    );
+  } catch (error) {
+    setStatus("Erreur pendant le test.");
+    const message = error instanceof Error ? error.message : String(error);
+    setStatus(message);
+  } finally {
+    setProcessing(false);
+    if (elements.testBtn) {
+      elements.testBtn.textContent = "Tester compression";
+    }
   }
 }
 
@@ -728,9 +1124,21 @@ elements.model.addEventListener("change", () => {
   updatePriceDisplay();
 });
 
+if (elements.largeFileMode) {
+  elements.largeFileMode.addEventListener("change", () => {
+    updateCompressionControls();
+  });
+}
+
 elements.transcribeBtn.addEventListener("click", () => {
   transcribe();
 });
+
+if (elements.testBtn) {
+  elements.testBtn.addEventListener("click", () => {
+    testCompression();
+  });
+}
 
 elements.copyBtn.addEventListener("click", async () => {
   const text = elements.transcript.value;
@@ -798,6 +1206,7 @@ function loadStoredKey() {
 
 loadStoredKey();
 updateModelPriceHint();
+updateCompressionControls();
 updatePriceDisplay();
 clearStatus();
 setStatus("Prêt pour une transcription.", true);
