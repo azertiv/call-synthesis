@@ -69,11 +69,12 @@
         <label class="field">
           <span>Modèle</span>
           <select id="model">
-            <option value="gpt-4o-mini-transcribe">gpt-4o-mini-transcribe</option>
-            <option value="gpt-4o-transcribe">gpt-4o-transcribe</option>
-            <option value="whisper-1">whisper-1</option>
+            <option value="gpt-4o-mini-transcribe">gpt-4o-mini-transcribe · $0.003/min</option>
+            <option value="gpt-4o-transcribe">gpt-4o-transcribe · $0.006/min</option>
+            <option value="whisper-1">whisper-1 · $0.006/min</option>
           </select>
         </label>
+        <div class="hint" id="modelPriceHint"></div>
         <label class="field">
           <span>Langue (optionnel)</span>
           <input type="text" id="language" placeholder="fr, en, es..." />
@@ -145,8 +146,13 @@
             <span class="stat-label">Estimation</span>
             <span class="stat-value" id="tokensEstimate">—</span>
           </div>
+          <div>
+            <span class="stat-label">Prix total</span>
+            <span class="stat-value" id="priceTotal">—</span>
+          </div>
         </div>
         <div class="hint" id="usageHint">L'estimation se base sur le texte si l'API ne renvoie pas l'usage.</div>
+        <div class="hint" id="priceHint"></div>
       </section>
 
       <section class="panel output">

@@ -11,12 +11,31 @@ const COMPRESSION_MIME_TYPES = [
 const COMPRESSION_SAFETY = 0.9;
 const STORAGE_KEY = "callSynthesis.apiKey";
 const STORAGE_REMEMBER = "callSynthesis.remember";
+const PRICE_PER_MILLION = 1_000_000;
+const MODEL_PRICING = {
+  "gpt-4o-mini-transcribe": {
+    perMinute: 0.003,
+    textInputPer1M: 1.25,
+    textOutputPer1M: 5.0,
+    audioInputPer1M: 3.0,
+  },
+  "gpt-4o-transcribe": {
+    perMinute: 0.006,
+    textInputPer1M: 2.5,
+    textOutputPer1M: 10.0,
+    audioInputPer1M: 6.0,
+  },
+  "whisper-1": {
+    perMinute: 0.006,
+  },
+};
 
 const elements = {
   apiKey: document.getElementById("apiKey"),
   rememberKey: document.getElementById("rememberKey"),
   clearKey: document.getElementById("clearKey"),
   model: document.getElementById("model"),
+  modelPriceHint: document.getElementById("modelPriceHint"),
   language: document.getElementById("language"),
   compression: document.getElementById("compression"),
   dropzone: document.getElementById("dropzone"),
@@ -32,7 +51,9 @@ const elements = {
   tokensOutput: document.getElementById("tokensOutput"),
   tokensTotal: document.getElementById("tokensTotal"),
   tokensEstimate: document.getElementById("tokensEstimate"),
+  priceTotal: document.getElementById("priceTotal"),
   usageHint: document.getElementById("usageHint"),
+  priceHint: document.getElementById("priceHint"),
 };
 
 const state = {
@@ -40,6 +61,8 @@ const state = {
   objectUrl: null,
   usage: { input: 0, output: 0, total: 0 },
   usageSeen: false,
+  durationSeconds: null,
+  activeModel: null,
 };
 
 function formatBytes(bytes) {
@@ -89,6 +112,130 @@ function estimateTokens(text) {
   return Math.max(1, Math.round(trimmed.length / 4));
 }
 
+function formatUsd(value, decimals) {
+  if (!Number.isFinite(value)) return "—";
+  return `$${value.toFixed(decimals)}`;
+}
+
+function formatRate(value) {
+  const decimals = value < 1 ? 3 : 2;
+  return formatUsd(value, decimals);
+}
+
+function formatCost(value) {
+  const absValue = Math.abs(value);
+  let decimals = 2;
+  if (absValue < 0.1) {
+    decimals = 4;
+  } else if (absValue < 1) {
+    decimals = 3;
+  }
+  return formatUsd(value, decimals);
+}
+
+function formatPerMillion(value) {
+  return formatUsd(value, 2);
+}
+
+function buildModelPriceHint(model) {
+  const pricing = MODEL_PRICING[model];
+  if (!pricing) return "Tarif indisponible pour ce modèle.";
+  const parts = [];
+  if (Number.isFinite(pricing.perMinute)) {
+    parts.push(`env. ${formatRate(pricing.perMinute)} / min`);
+  }
+  if (Number.isFinite(pricing.audioInputPer1M)) {
+    parts.push(`Audio entrée ${formatPerMillion(pricing.audioInputPer1M)} / 1M tokens`);
+  }
+  if (Number.isFinite(pricing.textInputPer1M)) {
+    parts.push(
+      `Texte entrée (prompt) ${formatPerMillion(pricing.textInputPer1M)} / 1M tokens`,
+    );
+  }
+  if (Number.isFinite(pricing.textOutputPer1M)) {
+    parts.push(`Texte sortie ${formatPerMillion(pricing.textOutputPer1M)} / 1M tokens`);
+  }
+  return `Tarif : ${parts.join(" · ")}`;
+}
+
+function updateModelPriceHint() {
+  if (!elements.modelPriceHint) return;
+  const model = elements.model.value.trim();
+  elements.modelPriceHint.textContent = buildModelPriceHint(model);
+}
+
+function estimatePriceFromUsage(model, usage) {
+  const pricing = MODEL_PRICING[model];
+  if (!pricing || !usage) return null;
+  const inputRate = Number.isFinite(pricing.audioInputPer1M)
+    ? pricing.audioInputPer1M
+    : pricing.textInputPer1M;
+  const outputRate = pricing.textOutputPer1M;
+  let total = 0;
+  let used = false;
+
+  if (Number.isFinite(usage.input) && Number.isFinite(inputRate)) {
+    total += (usage.input / PRICE_PER_MILLION) * inputRate;
+    used = true;
+  }
+  if (Number.isFinite(usage.output) && Number.isFinite(outputRate)) {
+    total += (usage.output / PRICE_PER_MILLION) * outputRate;
+    used = true;
+  }
+
+  return used ? total : null;
+}
+
+function estimatePriceFromDuration(model, durationSeconds) {
+  const pricing = MODEL_PRICING[model];
+  if (!pricing || !Number.isFinite(pricing.perMinute)) return null;
+  if (!Number.isFinite(durationSeconds)) return null;
+  return (durationSeconds / 60) * pricing.perMinute;
+}
+
+function updatePriceDisplay() {
+  if (!elements.priceTotal || !elements.priceHint) return;
+  const model = (state.activeModel || elements.model.value || "").trim();
+  const pricing = MODEL_PRICING[model];
+
+  if (!pricing) {
+    elements.priceTotal.textContent = "—";
+    elements.priceHint.textContent = "Tarif indisponible pour ce modèle.";
+    return;
+  }
+
+  if (!state.file && !state.usageSeen) {
+    elements.priceTotal.textContent = "—";
+    elements.priceHint.textContent = "Ajoutez un fichier pour estimer le prix.";
+    return;
+  }
+
+  let cost = null;
+  let note = "";
+
+  if (state.usageSeen) {
+    const usageCost = estimatePriceFromUsage(model, state.usage);
+    if (usageCost != null) {
+      cost = formatCost(usageCost);
+      note = `Prix calculé à partir des tokens (${model}).`;
+    }
+  }
+
+  if (cost == null) {
+    const durationCost = estimatePriceFromDuration(model, state.durationSeconds);
+    if (durationCost != null) {
+      cost = formatCost(durationCost);
+      note = `Prix estimé à partir de la durée audio (${model}).`;
+    } else {
+      cost = "—";
+      note = `Durée audio indisponible pour estimer le prix (${model}).`;
+    }
+  }
+
+  elements.priceTotal.textContent = cost;
+  elements.priceHint.textContent = note;
+}
+
 function updateUsageHint() {
   elements.usageHint.textContent = state.usageSeen
     ? "Usage fourni par l'API."
@@ -97,12 +244,15 @@ function updateUsageHint() {
 
 function setFile(file) {
   state.file = file;
+  state.durationSeconds = null;
+  state.activeModel = null;
+  state.usage = { input: 0, output: 0, total: 0 };
+  state.usageSeen = false;
   elements.transcribeBtn.disabled = !file;
   elements.transcript.value = "";
   setTokens({ input: "—", output: "—", total: "—", estimate: "—" });
-  state.usage = { input: 0, output: 0, total: 0 };
-  state.usageSeen = false;
   updateUsageHint();
+  updatePriceDisplay();
 
   if (!file) {
     elements.fileMeta.textContent = "Aucun fichier chargé.";
@@ -438,6 +588,7 @@ async function transcribe() {
     return;
   }
 
+  state.activeModel = model;
   elements.transcribeBtn.disabled = true;
   elements.transcribeBtn.textContent = "Traitement...";
   elements.transcript.value = "";
@@ -445,6 +596,7 @@ async function transcribe() {
   state.usage = { input: 0, output: 0, total: 0 };
   state.usageSeen = false;
   updateUsageHint();
+  updatePriceDisplay();
   clearStatus();
   setStatus("Analyse du fichier audio…");
 
@@ -513,6 +665,7 @@ async function transcribe() {
           estimate: "—",
         });
         updateUsageHint();
+        updatePriceDisplay();
       }
     }
 
@@ -529,6 +682,7 @@ async function transcribe() {
     } else {
       elements.tokensEstimate.textContent = estimatedTokens || "—";
     }
+    updatePriceDisplay();
     setStatus("Transcription terminée ✅");
   } catch (error) {
     setStatus("Erreur pendant la transcription.");
@@ -543,6 +697,12 @@ async function transcribe() {
 elements.fileInput.addEventListener("change", (event) => {
   const file = event.target.files?.[0] || null;
   setFile(file);
+});
+
+elements.audioPreview.addEventListener("loadedmetadata", () => {
+  const duration = elements.audioPreview.duration;
+  state.durationSeconds = Number.isFinite(duration) ? duration : null;
+  updatePriceDisplay();
 });
 
 elements.dropzone.addEventListener("dragover", (event) => {
@@ -561,6 +721,11 @@ elements.dropzone.addEventListener("drop", (event) => {
   if (file) {
     setFile(file);
   }
+});
+
+elements.model.addEventListener("change", () => {
+  updateModelPriceHint();
+  updatePriceDisplay();
 });
 
 elements.transcribeBtn.addEventListener("click", () => {
@@ -632,5 +797,7 @@ function loadStoredKey() {
 }
 
 loadStoredKey();
+updateModelPriceHint();
+updatePriceDisplay();
 clearStatus();
 setStatus("Prêt pour une transcription.", true);
