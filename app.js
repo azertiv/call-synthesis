@@ -386,6 +386,39 @@ function getFileExtension(file) {
   return "m4a";
 }
 
+function parseFfmpegDuration(message) {
+  if (!message) return null;
+  const match = message.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  const seconds = Number(match[3]);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes) || !Number.isFinite(seconds)) {
+    return null;
+  }
+  return hours * 3600 + minutes * 60 + seconds;
+}
+
+async function probeDurationWithFfmpeg(ffmpeg, inputName) {
+  let duration = null;
+  const onLog = ({ message }) => {
+    if (duration != null) return;
+    const parsed = parseFfmpegDuration(message);
+    if (parsed != null) {
+      duration = parsed;
+    }
+  };
+  ffmpeg.on("log", onLog);
+  try {
+    await ffmpeg.exec(["-hide_banner", "-i", inputName]);
+  } catch (error) {
+    // Ignore probing errors.
+  } finally {
+    ffmpeg.off("log", onLog);
+  }
+  return duration;
+}
+
 function getDurationFromMetadata(file) {
   return new Promise((resolve, reject) => {
     const audio = document.createElement("audio");
@@ -724,18 +757,28 @@ async function clearFfmpegSegments(ffmpeg, prefix) {
 async function ffmpegCopySegment(file) {
   setStatus("FFmpeg : découpe rapide sans ré-encodage.");
   const { instance: ffmpeg } = await loadFfmpeg();
-  const duration = await getAudioDuration(file);
-  if (!Number.isFinite(duration) || duration <= 0) {
-    throw new Error("Durée audio invalide.");
-  }
-
   const inputExtension = getFileExtension(file);
   const inputName = `input.${inputExtension}`;
+  await ffmpeg.writeFile(inputName, await toUint8Array(file));
+
+  const probedDuration = await probeDurationWithFfmpeg(ffmpeg, inputName);
+  const duration = probedDuration ?? await getAudioDuration(file);
+  if (!Number.isFinite(duration) || duration <= 0) {
+    try {
+      await ffmpeg.deleteFile(inputName);
+    } catch (error) {
+      // Ignore cleanup failures.
+    }
+    throw new Error("Durée audio invalide.");
+  }
+  if (state.file === file) {
+    state.durationSeconds = duration;
+    updatePriceDisplay();
+  }
+
   const outputPrefix = "segment";
   const outputExtension = inputExtension;
   const outputPattern = `${outputPrefix}-%03d.${outputExtension}`;
-
-  await ffmpeg.writeFile(inputName, await toUint8Array(file));
 
   const estimatedBitrate = (file.size * 8) / duration;
   const maxSegmentSeconds = Math.max(
@@ -746,9 +789,10 @@ async function ffmpegCopySegment(file) {
   const timeBasedCount = Math.max(1, Math.ceil(duration / maxSegmentSeconds));
   const segmentCount = Math.max(sizeBasedCount, timeBasedCount);
   const segmentDuration = duration / segmentCount;
+  const segmentTime = segmentDuration * 1.03;
 
   setStatus(
-    `Découpe FFmpeg : ${segmentCount} segment(s) d'env. ${formatDuration(segmentDuration)}.`,
+    `Découpe FFmpeg : cible ${segmentCount} segment(s) d'env. ${formatDuration(segmentTime)}.`,
   );
 
   try {
@@ -763,7 +807,7 @@ async function ffmpegCopySegment(file) {
       "-f",
       "segment",
       "-segment_time",
-      `${segmentDuration}`,
+      `${segmentTime}`,
       "-reset_timestamps",
       "1",
       outputPattern,
@@ -787,6 +831,11 @@ async function ffmpegCopySegment(file) {
   setStatus(
     `Préparation terminée : ${chunks.length} segment(s) · ${formatBytes(totalSize)}.`,
   );
+  if (chunks.length > segmentCount) {
+    setStatus(
+      "Note : la découpe dépend des points de coupe du fichier, le nombre de segments peut varier.",
+    );
+  }
   return {
     chunks,
     totalSize,
@@ -799,18 +848,28 @@ async function ffmpegCopySegment(file) {
 async function ffmpegReencodeSegment(file, compression) {
   setStatus("FFmpeg : ré-encodage rapide.");
   const { instance: ffmpeg } = await loadFfmpeg();
-  const duration = await getAudioDuration(file);
-  if (!Number.isFinite(duration) || duration <= 0) {
-    throw new Error("Durée audio invalide.");
-  }
-
   const inputExtension = getFileExtension(file);
   const inputName = `input.${inputExtension}`;
+  await ffmpeg.writeFile(inputName, await toUint8Array(file));
+
+  const probedDuration = await probeDurationWithFfmpeg(ffmpeg, inputName);
+  const duration = probedDuration ?? await getAudioDuration(file);
+  if (!Number.isFinite(duration) || duration <= 0) {
+    try {
+      await ffmpeg.deleteFile(inputName);
+    } catch (error) {
+      // Ignore cleanup failures.
+    }
+    throw new Error("Durée audio invalide.");
+  }
+  if (state.file === file) {
+    state.durationSeconds = duration;
+    updatePriceDisplay();
+  }
+
   const outputPrefix = "segment";
   const outputExtension = "m4a";
   const outputPattern = `${outputPrefix}-%03d.${outputExtension}`;
-
-  await ffmpeg.writeFile(inputName, await toUint8Array(file));
 
   const maxSegmentSeconds = Math.max(
     1,
@@ -818,10 +877,11 @@ async function ffmpegReencodeSegment(file, compression) {
   );
   const segmentCount = Math.max(1, Math.ceil(duration / maxSegmentSeconds));
   const segmentDuration = duration / segmentCount;
+  const segmentTime = segmentDuration * 1.03;
 
   setStatus(
-    `Ré-encodage ${compression.label} : ${segmentCount} segment(s) d'env. ${formatDuration(
-      segmentDuration,
+    `Ré-encodage ${compression.label} : cible ${segmentCount} segment(s) d'env. ${formatDuration(
+      segmentTime,
     )}.`,
   );
 
@@ -835,18 +895,18 @@ async function ffmpegReencodeSegment(file, compression) {
       "1",
       "-ar",
       `${TARGET_SAMPLE_RATE}`,
-    "-c:a",
-    "aac",
+      "-c:a",
+      "aac",
       "-b:a",
       `${Math.round(compression.bitrate / 1000)}k`,
       "-f",
       "segment",
       "-segment_time",
-      `${segmentDuration}`,
+      `${segmentTime}`,
       "-reset_timestamps",
       "1",
       outputPattern,
-    ]);
+  ]);
   } finally {
     try {
       await ffmpeg.deleteFile(inputName);
@@ -866,6 +926,11 @@ async function ffmpegReencodeSegment(file, compression) {
   setStatus(
     `Préparation terminée : ${chunks.length} segment(s) · ${formatBytes(totalSize)}.`,
   );
+  if (chunks.length > segmentCount) {
+    setStatus(
+      "Note : la découpe dépend des points de coupe du fichier, le nombre de segments peut varier.",
+    );
+  }
   return {
     chunks,
     totalSize,
