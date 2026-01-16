@@ -10,13 +10,9 @@ const COMPRESSION_MIME_TYPES = [
   "audio/mp4",
   "audio/aac",
 ];
-const FFMPEG_VERSION = "0.12.6";
-const FFMPEG_UTIL_VERSION = "0.12.0";
-const FFMPEG_JS_URL = `https://unpkg.com/@ffmpeg/ffmpeg@${FFMPEG_VERSION}/dist/esm/index.js`;
-const FFMPEG_UTIL_URL = `https://unpkg.com/@ffmpeg/util@${FFMPEG_UTIL_VERSION}/dist/esm/index.js`;
-const FFMPEG_CORE_BASE = `https://unpkg.com/@ffmpeg/core@${FFMPEG_VERSION}/dist/umd`;
-const FFMPEG_CORE_URL = `${FFMPEG_CORE_BASE}/ffmpeg-core.js`;
-const FFMPEG_WASM_URL = `${FFMPEG_CORE_BASE}/ffmpeg-core.wasm`;
+const FFMPEG_BASE_PATH = "vendor/ffmpeg/";
+const FFMPEG_CORE_FILE = "ffmpeg-core.js";
+const FFMPEG_WASM_FILE = "ffmpeg-core.wasm";
 const STORAGE_KEY = "callSynthesis.apiKey";
 const STORAGE_REMEMBER = "callSynthesis.remember";
 const PRICE_PER_MILLION = 1_000_000;
@@ -78,7 +74,6 @@ const state = {
 
 const ffmpegState = {
   instance: null,
-  util: null,
   loading: null,
 };
 
@@ -104,27 +99,6 @@ function formatDuration(seconds) {
   const hours = Math.floor(minutesTotal / 60);
   const minutes = minutesTotal % 60;
   return `${hours} h ${minutes} min`;
-}
-
-function createDownloadReporter(label) {
-  let lastPercent = -1;
-  let lastUpdate = 0;
-  return (event) => {
-    const now = Date.now();
-    if (!event) return;
-    if (!event.total || event.total <= 0) {
-      if (!event.done && now - lastUpdate < 800) return;
-      const received = Number.isFinite(event.received) ? formatBytes(event.received) : "…";
-      setProgressStatus(`Téléchargement ${label} : ${received}`);
-      lastUpdate = now;
-      return;
-    }
-    const percent = Math.min(100, Math.round((event.received / event.total) * 100));
-    if (!event.done && percent === lastPercent && now - lastUpdate < 500) return;
-    lastPercent = percent;
-    lastUpdate = now;
-    setProgressStatus(`Téléchargement ${label} : ${percent}%`);
-  };
 }
 
 function setStatus(message, isIdle = false) {
@@ -482,39 +456,60 @@ async function loadFfmpeg() {
     return ffmpegState.loading;
   }
   ffmpegState.loading = (async () => {
+    let ffmpeg;
     try {
-      setProgressStatus("Chargement de FFmpeg.wasm (~32 Mo)...");
-      const [{ FFmpeg }, util] = await Promise.all([
-        import(FFMPEG_JS_URL),
-        import(FFMPEG_UTIL_URL),
-      ]);
-      const ffmpeg = new FFmpeg();
-      const coreURL = await util.toBlobURL(
-        FFMPEG_CORE_URL,
-        "text/javascript",
-        true,
-        createDownloadReporter("ffmpeg-core.js"),
-      );
-      const wasmURL = await util.toBlobURL(
-        FFMPEG_WASM_URL,
-        "application/wasm",
-        true,
-        createDownloadReporter("ffmpeg-core.wasm"),
-      );
       setProgressStatus("Initialisation de FFmpeg...");
-      await ffmpeg.load({ coreURL, wasmURL });
+      const ffmpegGlobal = window.FFmpegWASM;
+      if (!ffmpegGlobal || !ffmpegGlobal.FFmpeg) {
+        throw new Error("FFmpeg non chargé. Vérifiez vendor/ffmpeg/ffmpeg.js.");
+      }
+      ffmpeg = new ffmpegGlobal.FFmpeg();
+      const baseURL = new URL(FFMPEG_BASE_PATH, window.location.href);
+      const coreURL = new URL(FFMPEG_CORE_FILE, baseURL).toString();
+      const wasmURL = new URL(FFMPEG_WASM_FILE, baseURL).toString();
+      let slowTimer;
+      let timeoutId;
+      try {
+        slowTimer = setTimeout(() => {
+          setProgressStatus("Initialisation en cours... (peut prendre 1-2 min)");
+        }, 15000);
+        const timeoutPromise = new Promise((_, reject) => {
+          timeoutId = setTimeout(() => {
+            reject(new Error("Initialisation FFmpeg trop longue."));
+          }, 90000);
+        });
+        await Promise.race([ffmpeg.load({ coreURL, wasmURL }), timeoutPromise]);
+      } finally {
+        clearTimeout(slowTimer);
+        clearTimeout(timeoutId);
+      }
       progressLine = null;
       ffmpegState.instance = ffmpeg;
-      ffmpegState.util = util;
       ffmpegState.loading = null;
       return ffmpegState;
     } catch (error) {
+      if (ffmpeg?.terminate) {
+        try {
+          ffmpeg.terminate();
+        } catch (err) {
+          // Ignore terminate failures.
+        }
+      }
       ffmpegState.loading = null;
       progressLine = null;
       throw error;
     }
   })();
   return ffmpegState.loading;
+}
+
+async function toUint8Array(file) {
+  if (file instanceof Uint8Array) return file;
+  if (file instanceof ArrayBuffer) return new Uint8Array(file);
+  if (file?.arrayBuffer) {
+    return new Uint8Array(await file.arrayBuffer());
+  }
+  return new Uint8Array();
 }
 
 function writeString(view, offset, value) {
@@ -728,7 +723,7 @@ async function clearFfmpegSegments(ffmpeg, prefix) {
 
 async function ffmpegCopySegment(file) {
   setStatus("FFmpeg : découpe rapide sans ré-encodage.");
-  const { instance: ffmpeg, util } = await loadFfmpeg();
+  const { instance: ffmpeg } = await loadFfmpeg();
   const duration = await getAudioDuration(file);
   if (!Number.isFinite(duration) || duration <= 0) {
     throw new Error("Durée audio invalide.");
@@ -740,7 +735,7 @@ async function ffmpegCopySegment(file) {
   const outputExtension = inputExtension;
   const outputPattern = `${outputPrefix}-%03d.${outputExtension}`;
 
-  await ffmpeg.writeFile(inputName, await util.fetchFile(file));
+  await ffmpeg.writeFile(inputName, await toUint8Array(file));
 
   const estimatedBitrate = (file.size * 8) / duration;
   const maxSegmentSeconds = Math.max(
@@ -803,7 +798,7 @@ async function ffmpegCopySegment(file) {
 
 async function ffmpegReencodeSegment(file, compression) {
   setStatus("FFmpeg : ré-encodage rapide.");
-  const { instance: ffmpeg, util } = await loadFfmpeg();
+  const { instance: ffmpeg } = await loadFfmpeg();
   const duration = await getAudioDuration(file);
   if (!Number.isFinite(duration) || duration <= 0) {
     throw new Error("Durée audio invalide.");
@@ -815,7 +810,7 @@ async function ffmpegReencodeSegment(file, compression) {
   const outputExtension = "m4a";
   const outputPattern = `${outputPrefix}-%03d.${outputExtension}`;
 
-  await ffmpeg.writeFile(inputName, await util.fetchFile(file));
+  await ffmpeg.writeFile(inputName, await toUint8Array(file));
 
   const maxSegmentSeconds = Math.max(
     1,
