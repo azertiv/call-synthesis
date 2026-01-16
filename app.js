@@ -111,6 +111,13 @@ function sanitizeBaseName(name) {
   return name.replace(/\.[^/.]+$/, "").replace(/[^a-z0-9-_]+/gi, "-");
 }
 
+function resolveResponseFormat(model) {
+  if (model === "whisper-1") {
+    return "verbose_json";
+  }
+  return "json";
+}
+
 function writeString(view, offset, value) {
   for (let i = 0; i < value.length; i += 1) {
     view.setUint8(offset + i, value.charCodeAt(i));
@@ -247,7 +254,7 @@ async function transcribe() {
         : `${baseName}-part-${String(chunk.index).padStart(2, "0")}.wav`;
       formData.append("file", chunk.blob, filename);
       formData.append("model", model);
-      formData.append("response_format", "verbose_json");
+      formData.append("response_format", resolveResponseFormat(model));
       if (language) {
         formData.append("language", language);
       }
