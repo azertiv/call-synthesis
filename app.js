@@ -14,7 +14,7 @@ const FFMPEG_VERSION = "0.12.6";
 const FFMPEG_UTIL_VERSION = "0.12.0";
 const FFMPEG_JS_URL = `https://unpkg.com/@ffmpeg/ffmpeg@${FFMPEG_VERSION}/dist/esm/index.js`;
 const FFMPEG_UTIL_URL = `https://unpkg.com/@ffmpeg/util@${FFMPEG_UTIL_VERSION}/dist/esm/index.js`;
-const FFMPEG_CORE_BASE = `https://unpkg.com/@ffmpeg/core@${FFMPEG_VERSION}/dist/esm`;
+const FFMPEG_CORE_BASE = `https://unpkg.com/@ffmpeg/core@${FFMPEG_VERSION}/dist/umd`;
 const FFMPEG_CORE_URL = `${FFMPEG_CORE_BASE}/ffmpeg-core.js`;
 const FFMPEG_WASM_URL = `${FFMPEG_CORE_BASE}/ffmpeg-core.wasm`;
 const STORAGE_KEY = "callSynthesis.apiKey";
@@ -82,6 +82,8 @@ const ffmpegState = {
   loading: null,
 };
 
+let progressLine = null;
+
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return "—";
   const units = ["o", "Ko", "Mo", "Go"];
@@ -104,6 +106,27 @@ function formatDuration(seconds) {
   return `${hours} h ${minutes} min`;
 }
 
+function createDownloadReporter(label) {
+  let lastPercent = -1;
+  let lastUpdate = 0;
+  return (event) => {
+    const now = Date.now();
+    if (!event) return;
+    if (!event.total || event.total <= 0) {
+      if (!event.done && now - lastUpdate < 800) return;
+      const received = Number.isFinite(event.received) ? formatBytes(event.received) : "…";
+      setProgressStatus(`Téléchargement ${label} : ${received}`);
+      lastUpdate = now;
+      return;
+    }
+    const percent = Math.min(100, Math.round((event.received / event.total) * 100));
+    if (!event.done && percent === lastPercent && now - lastUpdate < 500) return;
+    lastPercent = percent;
+    lastUpdate = now;
+    setProgressStatus(`Téléchargement ${label} : ${percent}%`);
+  };
+}
+
 function setStatus(message, isIdle = false) {
   const line = document.createElement("div");
   line.className = `status-line${isIdle ? " idle" : ""}`;
@@ -114,6 +137,17 @@ function setStatus(message, isIdle = false) {
 
 function clearStatus() {
   elements.statusLog.innerHTML = "";
+  progressLine = null;
+}
+
+function setProgressStatus(message) {
+  if (!progressLine) {
+    progressLine = document.createElement("div");
+    progressLine.className = "status-line";
+    elements.statusLog.appendChild(progressLine);
+  }
+  progressLine.textContent = message;
+  elements.statusLog.scrollTop = elements.statusLog.scrollHeight;
 }
 
 function setProcessing(isProcessing) {
@@ -449,21 +483,34 @@ async function loadFfmpeg() {
   }
   ffmpegState.loading = (async () => {
     try {
-      setStatus("Chargement de FFmpeg.wasm (~32 Mo)...");
+      setProgressStatus("Chargement de FFmpeg.wasm (~32 Mo)...");
       const [{ FFmpeg }, util] = await Promise.all([
         import(FFMPEG_JS_URL),
         import(FFMPEG_UTIL_URL),
       ]);
       const ffmpeg = new FFmpeg();
-      const coreURL = await util.toBlobURL(FFMPEG_CORE_URL, "text/javascript");
-      const wasmURL = await util.toBlobURL(FFMPEG_WASM_URL, "application/wasm");
+      const coreURL = await util.toBlobURL(
+        FFMPEG_CORE_URL,
+        "text/javascript",
+        true,
+        createDownloadReporter("ffmpeg-core.js"),
+      );
+      const wasmURL = await util.toBlobURL(
+        FFMPEG_WASM_URL,
+        "application/wasm",
+        true,
+        createDownloadReporter("ffmpeg-core.wasm"),
+      );
+      setProgressStatus("Initialisation de FFmpeg...");
       await ffmpeg.load({ coreURL, wasmURL });
+      progressLine = null;
       ffmpegState.instance = ffmpeg;
       ffmpegState.util = util;
       ffmpegState.loading = null;
       return ffmpegState;
     } catch (error) {
       ffmpegState.loading = null;
+      progressLine = null;
       throw error;
     }
   })();
