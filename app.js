@@ -3,6 +3,13 @@ const SAFE_CHUNK_BYTES = 24 * 1024 * 1024;
 const TARGET_SAMPLE_RATE = 16000;
 const WAV_HEADER_BYTES = 44;
 const COPY_SAFETY = 0.85;
+const SEGMENT_TIME_MARGIN = 1.03;
+const RETRY_SEGMENT_MINUTES = [15, 10, 8];
+const MAX_SEGMENT_MINUTES_BY_MODEL = {
+  "gpt-4o-mini-transcribe": 20,
+  "gpt-4o-transcribe": 20,
+  "whisper-1": 30,
+};
 const FFMPEG_BASE_PATH = "vendor/ffmpeg/";
 const FFMPEG_CORE_FILE = "ffmpeg-core.js";
 const FFMPEG_WASM_FILE = "ffmpeg-core.wasm";
@@ -51,6 +58,8 @@ const elements = {
   priceTotal: document.getElementById("priceTotal"),
   usageHint: document.getElementById("usageHint"),
   priceHint: document.getElementById("priceHint"),
+  segmentsList: document.getElementById("segmentsList"),
+  downloadSegmentsBtn: document.getElementById("downloadSegmentsBtn"),
 };
 
 const state = {
@@ -61,6 +70,8 @@ const state = {
   durationSeconds: null,
   activeModel: null,
   processing: false,
+  segments: [],
+  segmentUrls: [],
 };
 
 const ffmpegState = {
@@ -267,6 +278,99 @@ function updateUsageHint() {
     : "L'estimation se base sur le texte si l'API ne renvoie pas l'usage.";
 }
 
+function getMaxSegmentDurationSeconds(model) {
+  const minutes = MAX_SEGMENT_MINUTES_BY_MODEL[model] ?? 20;
+  if (!Number.isFinite(minutes) || minutes <= 0) return null;
+  return minutes * 60;
+}
+
+function buildRetryDurationSteps(maxDurationSeconds) {
+  const steps = [];
+  if (Number.isFinite(maxDurationSeconds) && maxDurationSeconds > 0) {
+    steps.push(maxDurationSeconds);
+    for (const minutes of RETRY_SEGMENT_MINUTES) {
+      const seconds = minutes * 60;
+      if (seconds < maxDurationSeconds && !steps.includes(seconds)) {
+        steps.push(seconds);
+      }
+    }
+  }
+  return steps.length ? steps : [20 * 60];
+}
+
+function clearSegments() {
+  state.segments = [];
+  if (state.segmentUrls.length) {
+    for (const url of state.segmentUrls) {
+      URL.revokeObjectURL(url);
+    }
+  }
+  state.segmentUrls = [];
+  if (!elements.segmentsList) return;
+  elements.segmentsList.innerHTML = '<div class="segments-empty">Aucun segment généré.</div>';
+  if (elements.downloadSegmentsBtn) {
+    elements.downloadSegmentsBtn.disabled = true;
+  }
+}
+
+function buildSegmentFilename(baseName, file, chunk) {
+  const extension = chunk.extension || getFileExtension(file);
+  if (chunk.isOriginal && file?.name) {
+    return file.name;
+  }
+  return `${baseName}-part-${String(chunk.index).padStart(2, "0")}.${extension}`;
+}
+
+function setSegments(chunks, file) {
+  clearSegments();
+  if (!elements.segmentsList) return;
+  if (!chunks || !chunks.length) return;
+
+  const baseName = sanitizeBaseName(file?.name || "audio");
+  const fragment = document.createDocumentFragment();
+  state.segments = chunks.map((chunk) => {
+    const filename = buildSegmentFilename(baseName, file, chunk);
+    const url = URL.createObjectURL(chunk.blob);
+    state.segmentUrls.push(url);
+
+    const item = document.createElement("div");
+    item.className = "segment-item";
+
+    const name = document.createElement("span");
+    name.className = "segment-name";
+    name.textContent = filename;
+
+    const size = document.createElement("span");
+    size.className = "segment-size";
+    size.textContent = formatBytes(chunk.blob.size);
+
+    const button = document.createElement("button");
+    button.className = "ghost";
+    button.textContent = "Télécharger";
+    button.addEventListener("click", () => {
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    });
+
+    item.appendChild(name);
+    item.appendChild(size);
+    item.appendChild(button);
+    fragment.appendChild(item);
+
+    return { filename, url };
+  });
+
+  elements.segmentsList.innerHTML = "";
+  elements.segmentsList.appendChild(fragment);
+  if (elements.downloadSegmentsBtn) {
+    elements.downloadSegmentsBtn.disabled = false;
+  }
+}
+
 function setFile(file) {
   state.file = file;
   state.durationSeconds = null;
@@ -278,6 +382,7 @@ function setFile(file) {
   setTokens({ input: "—", output: "—", total: "—", estimate: "—" });
   updateUsageHint();
   updatePriceDisplay();
+  clearSegments();
 
   if (!file) {
     elements.fileMeta.textContent = "Aucun fichier chargé.";
@@ -299,6 +404,15 @@ function setFile(file) {
   elements.audioPreview.hidden = false;
 }
 
+function resetTranscriptionState() {
+  elements.transcript.value = "";
+  setTokens({ input: "—", output: "—", total: "—", estimate: "—" });
+  state.usage = { input: 0, output: 0, total: 0 };
+  state.usageSeen = false;
+  updateUsageHint();
+  updatePriceDisplay();
+}
+
 function sanitizeBaseName(name) {
   if (!name) return "audio";
   return name.replace(/\.[^/.]+$/, "").replace(/[^a-z0-9-_]+/gi, "-");
@@ -309,6 +423,19 @@ function resolveResponseFormat(model) {
     return "verbose_json";
   }
   return "json";
+}
+
+function isTokenLimitError(message) {
+  if (!message) return false;
+  const normalized = message.toLowerCase();
+  return (
+    (normalized.includes("tokens") &&
+      normalized.includes("audio") &&
+      normalized.includes("too large")) ||
+    normalized.includes("maximum context length") ||
+    normalized.includes("context length") ||
+    normalized.includes("token limit")
+  );
 }
 
 function extensionFromMimeType(mimeType) {
@@ -573,7 +700,7 @@ async function clearFfmpegSegments(ffmpeg, prefix) {
   }
 }
 
-async function ffmpegCopySegment(file) {
+async function ffmpegCopySegment(file, options = {}) {
   setStatus("FFmpeg : découpe rapide sans ré-encodage.");
   const { instance: ffmpeg } = await loadFfmpeg();
   const inputExtension = getFileExtension(file);
@@ -606,12 +733,23 @@ async function ffmpegCopySegment(file) {
   );
   const sizeBasedCount = Math.ceil(file.size / (SAFE_CHUNK_BYTES * COPY_SAFETY));
   const timeBasedCount = Math.max(1, Math.ceil(duration / maxSegmentSeconds));
-  const segmentCount = Math.max(sizeBasedCount, timeBasedCount);
+  const maxDurationSeconds = options.maxDurationSeconds;
+  const durationBasedCount = maxDurationSeconds
+    ? Math.ceil(duration / (maxDurationSeconds / SEGMENT_TIME_MARGIN))
+    : 1;
+  const segmentCount = Math.max(sizeBasedCount, timeBasedCount, durationBasedCount);
   const segmentDuration = duration / segmentCount;
-  const segmentTime = segmentDuration * 1.03;
+  let segmentTime = segmentDuration * SEGMENT_TIME_MARGIN;
+  if (maxDurationSeconds) {
+    segmentTime = Math.min(segmentTime, maxDurationSeconds);
+  }
+  const targetCount = Math.max(segmentCount, Math.ceil(duration / segmentTime));
+  const durationLimitNote = maxDurationSeconds
+    ? ` (limite ${formatDuration(maxDurationSeconds)})`
+    : "";
 
   setStatus(
-    `Découpe FFmpeg : cible ${segmentCount} segment(s) d'env. ${formatDuration(segmentTime)}.`,
+    `Découpe FFmpeg : cible ${targetCount} segment(s) d'env. ${formatDuration(segmentTime)}${durationLimitNote}.`,
   );
 
   try {
@@ -650,7 +788,7 @@ async function ffmpegCopySegment(file) {
   setStatus(
     `Préparation terminée : ${chunks.length} segment(s) · ${formatBytes(totalSize)}.`,
   );
-  if (chunks.length > segmentCount) {
+  if (chunks.length > targetCount) {
     setStatus(
       "Note : la découpe dépend des points de coupe du fichier, le nombre de segments peut varier.",
     );
@@ -706,8 +844,19 @@ async function downsampleAndChunk(file) {
   return { chunks, sampleRate: rendered.sampleRate, totalSize };
 }
 
-async function prepareFile(file) {
-  if (file.size <= MAX_FILE_BYTES) {
+async function prepareFile(file, model, options = {}) {
+  const overrideSeconds = options.maxDurationOverrideSeconds;
+  const maxDurationSeconds =
+    Number.isFinite(overrideSeconds) && overrideSeconds > 0
+      ? overrideSeconds
+      : getMaxSegmentDurationSeconds(model);
+  let needsDurationSplit = false;
+  if (file.size <= MAX_FILE_BYTES && maxDurationSeconds) {
+    const duration = await getAudioDuration(file);
+    needsDurationSplit = Number.isFinite(duration) && duration > maxDurationSeconds;
+  }
+
+  if (file.size <= MAX_FILE_BYTES && !needsDurationSplit) {
     setStatus("Fichier accepté sans découpage.");
     return {
       chunks: [{ blob: file, index: 1, isOriginal: true }],
@@ -717,7 +866,7 @@ async function prepareFile(file) {
   }
 
   try {
-    return await ffmpegCopySegment(file);
+    return await ffmpegCopySegment(file, { maxDurationSeconds });
   } catch (error) {
     setStatus("Découpe FFmpeg échouée, bascule en WAV.");
     const message = error instanceof Error ? error.message : String(error);
@@ -751,99 +900,120 @@ async function transcribe() {
   state.activeModel = model;
   setProcessing(true);
   elements.transcribeBtn.textContent = "Traitement...";
-  elements.transcript.value = "";
-  setTokens({ input: "—", output: "—", total: "—", estimate: "—" });
-  state.usage = { input: 0, output: 0, total: 0 };
-  state.usageSeen = false;
-  updateUsageHint();
-  updatePriceDisplay();
+  resetTranscriptionState();
   clearStatus();
   setStatus("Analyse du fichier audio…");
 
   try {
-    const { chunks, totalSize, usedOriginal } = await prepareFile(file);
     const baseName = sanitizeBaseName(file.name);
-    if (!usedOriginal) {
-      setStatus(`Taille finale : ${formatBytes(totalSize)}.`);
-    }
+    const maxDurationSeconds = getMaxSegmentDurationSeconds(model);
+    const retrySteps = buildRetryDurationSteps(maxDurationSeconds);
 
-    const transcriptParts = [];
-    for (let i = 0; i < chunks.length; i += 1) {
-      const chunk = chunks[i];
-      setStatus(`Transcription segment ${i + 1}/${chunks.length}…`);
-
-      const formData = new FormData();
-      const extension = chunk.extension || "wav";
-      const filename = chunk.isOriginal && file.name
-        ? file.name
-        : `${baseName}-part-${String(chunk.index).padStart(2, "0")}.${extension}`;
-      formData.append("file", chunk.blob, filename);
-      formData.append("model", model);
-      formData.append("response_format", resolveResponseFormat(model));
-      if (language) {
-        formData.append("language", language);
+    for (let attempt = 0; attempt < retrySteps.length; attempt += 1) {
+      const overrideSeconds = retrySteps[attempt];
+      if (attempt > 0) {
+        resetTranscriptionState();
+        setStatus(
+          `Nouvelle tentative avec des segments plus courts (limite ${formatDuration(overrideSeconds)}).`,
+        );
       }
 
-      const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: formData,
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        let message = errorText || "Erreur API OpenAI.";
-        try {
-          const parsed = JSON.parse(errorText);
-          if (parsed.error?.message) {
-            message = parsed.error.message;
-          }
-        } catch (err) {
-          // Ignore JSON parse errors.
-        }
-        throw new Error(message);
-      }
-
-      const data = await response.json();
-      const chunkText = (data.text || "").trim();
-      transcriptParts.push(chunkText);
-
-      if (data.usage) {
-        const inputTokens = Number(data.usage.input_tokens ?? 0);
-        const outputTokens = Number(data.usage.output_tokens ?? 0);
-        const totalTokens = Number(data.usage.total_tokens ?? inputTokens + outputTokens);
-        state.usage.input += inputTokens;
-        state.usage.output += outputTokens;
-        state.usage.total += totalTokens;
-        state.usageSeen = true;
-        setTokens({
-          input: state.usage.input || "—",
-          output: state.usage.output || "—",
-          total: state.usage.total || "—",
-          estimate: "—",
+      try {
+        const { chunks, totalSize, usedOriginal } = await prepareFile(file, model, {
+          maxDurationOverrideSeconds: overrideSeconds,
         });
-        updateUsageHint();
+        setSegments(chunks, file);
+        if (!usedOriginal) {
+          setStatus(`Taille finale : ${formatBytes(totalSize)}.`);
+        }
+
+        const transcriptParts = [];
+        for (let i = 0; i < chunks.length; i += 1) {
+          const chunk = chunks[i];
+          setStatus(`Transcription segment ${i + 1}/${chunks.length}…`);
+
+          const formData = new FormData();
+          const extension = chunk.extension || "wav";
+          const filename = chunk.isOriginal && file.name
+            ? file.name
+            : `${baseName}-part-${String(chunk.index).padStart(2, "0")}.${extension}`;
+          formData.append("file", chunk.blob, filename);
+          formData.append("model", model);
+          formData.append("response_format", resolveResponseFormat(model));
+          if (language) {
+            formData.append("language", language);
+          }
+
+          const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+            },
+            body: formData,
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            let message = errorText || "Erreur API OpenAI.";
+            try {
+              const parsed = JSON.parse(errorText);
+              if (parsed.error?.message) {
+                message = parsed.error.message;
+              }
+            } catch (err) {
+              // Ignore JSON parse errors.
+            }
+            throw new Error(message);
+          }
+
+          const data = await response.json();
+          const chunkText = (data.text || "").trim();
+          transcriptParts.push(chunkText);
+
+          if (data.usage) {
+            const inputTokens = Number(data.usage.input_tokens ?? 0);
+            const outputTokens = Number(data.usage.output_tokens ?? 0);
+            const totalTokens = Number(data.usage.total_tokens ?? inputTokens + outputTokens);
+            state.usage.input += inputTokens;
+            state.usage.output += outputTokens;
+            state.usage.total += totalTokens;
+            state.usageSeen = true;
+            setTokens({
+              input: state.usage.input || "—",
+              output: state.usage.output || "—",
+              total: state.usage.total || "—",
+              estimate: "—",
+            });
+            updateUsageHint();
+            updatePriceDisplay();
+          }
+        }
+
+        const fullTranscript = transcriptParts.filter(Boolean).join("\n\n");
+        elements.transcript.value = fullTranscript || "(Aucun texte retourné)";
+        const estimatedTokens = estimateTokens(fullTranscript);
+        if (!state.usageSeen) {
+          setTokens({
+            input: "—",
+            output: "—",
+            total: "—",
+            estimate: estimatedTokens || "—",
+          });
+        } else {
+          elements.tokensEstimate.textContent = estimatedTokens || "—";
+        }
         updatePriceDisplay();
+        setStatus("Transcription terminée ✅");
+        return;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (isTokenLimitError(message) && attempt < retrySteps.length - 1) {
+          setStatus("Limite de tokens atteinte pour ce modèle.");
+          continue;
+        }
+        throw error;
       }
     }
-
-    const fullTranscript = transcriptParts.filter(Boolean).join("\n\n");
-    elements.transcript.value = fullTranscript || "(Aucun texte retourné)";
-    const estimatedTokens = estimateTokens(fullTranscript);
-    if (!state.usageSeen) {
-      setTokens({
-        input: "—",
-        output: "—",
-        total: "—",
-        estimate: estimatedTokens || "—",
-      });
-    } else {
-      elements.tokensEstimate.textContent = estimatedTokens || "—";
-    }
-    updatePriceDisplay();
-    setStatus("Transcription terminée ✅");
   } catch (error) {
     setStatus("Erreur pendant la transcription.");
     const message = error instanceof Error ? error.message : String(error);
@@ -870,7 +1040,9 @@ async function testSegmentation() {
   setStatus("Test découpage/segmentation (aucun appel API).");
 
   try {
-    const { chunks, totalSize } = await prepareFile(file);
+    const model = elements.model.value.trim();
+    const { chunks, totalSize } = await prepareFile(file, model);
+    setSegments(chunks, file);
     setStatus(
       `Test terminé : ${chunks.length} segment(s) · ${formatBytes(totalSize)}.`,
     );
@@ -927,6 +1099,21 @@ elements.transcribeBtn.addEventListener("click", () => {
 if (elements.testBtn) {
   elements.testBtn.addEventListener("click", () => {
     testSegmentation();
+  });
+}
+
+if (elements.downloadSegmentsBtn) {
+  elements.downloadSegmentsBtn.addEventListener("click", () => {
+    if (!state.segments.length) return;
+    for (const segment of state.segments) {
+      const link = document.createElement("a");
+      link.href = segment.url;
+      link.download = segment.filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+    setStatus("Téléchargement des segments lancé.");
   });
 }
 
