@@ -4,6 +4,7 @@ const PROVIDER_CONFIG = {
   endpoint: "https://api.mistral.ai/v1/audio/transcriptions",
 };
 const MAX_PARALLEL_REQUESTS = 3;
+const FORCE_SEQUENTIAL_TRANSCRIPTION = true;
 const MAX_TRANSCRIBE_ATTEMPTS = 3;
 const RETRY_BACKOFF_BASE_MS = 700;
 const RETRY_BACKOFF_MAX_MS = 8000;
@@ -19,6 +20,7 @@ const THEME_STORAGE = "callSynthesis.theme";
 const HISTORY_STORAGE_KEY = "callSynthesis.history";
 const HISTORY_ENABLED_KEY = "callSynthesis.historyEnabled";
 const HISTORY_LIMIT = 30;
+const HISTORY_PREVIEW_CHARS = 160;
 const OVERLAP_MIN_WORDS = 6;
 const OVERLAP_MAX_WORDS = 80;
 const SEGMENT_DIAGNOSTICS_ENABLED = true;
@@ -26,6 +28,9 @@ const SEGMENT_DIAGNOSTIC_PREVIEW_CHARS = 80;
 const SEGMENT_EMPTY_TEXT_MIN_SECONDS = 45;
 const SEGMENT_EMPTY_TEXT_MIN_BYTES = 30000;
 const SEGMENT_COVERAGE_TOLERANCE_SECONDS = 2;
+const SEGMENT_SHORT_TEXT_MIN_SECONDS = 120;
+const SEGMENT_SHORT_TEXT_CHARS_PER_SECOND = 0.5;
+const SEGMENT_SHORT_TEXT_MIN_CHARS = 80;
 
 const ICONS = {
   open:
@@ -34,6 +39,8 @@ const ICONS = {
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"/></svg>',
   delete:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6"/><path d="M9 7V5h6v2" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6"/><path d="M7 7l1 12h8l1-12" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"/><path d="M10 11v6" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6"/><path d="M14 11v6" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6"/></svg>',
+  copy:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="5" y="5" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
 };
 
 const elements = {
@@ -69,8 +76,15 @@ const elements = {
   segmentsCount: document.getElementById("segmentsCount"),
   downloadSegmentsBtn: document.getElementById("downloadSegmentsBtn"),
   themeButtons: document.querySelectorAll("[data-theme-choice]"),
-  historyPanel: document.getElementById("historyPanel"),
+  historyToggle: document.getElementById("historyToggle"),
+  historyDrawer: document.getElementById("historyDrawer"),
+  historyBackdrop: document.getElementById("historyBackdrop"),
+  historyCloseBtn: document.getElementById("historyCloseBtn"),
   historyEnabled: document.getElementById("historyEnabled"),
+  historySearch: document.getElementById("historySearch"),
+  historyCount: document.getElementById("historyCount"),
+  historyClearBtn: document.getElementById("historyClearBtn"),
+  historyExportBtn: document.getElementById("historyExportBtn"),
   historyList: document.getElementById("historyList"),
   historyEmpty: document.getElementById("historyEmpty"),
 };
@@ -90,6 +104,7 @@ const state = {
   segmentsVisible: false,
   history: [],
   historyEnabled: true,
+  historyQuery: "",
   activeHistoryId: null,
 };
 
@@ -288,6 +303,20 @@ function isSuspiciousEmptyTranscript(chunk, text) {
     return false;
   }
   return true;
+}
+
+function isSuspiciouslyShortTranscript(chunk, text) {
+  const trimmed = (text || "").trim();
+  if (!trimmed) return false;
+  const duration = getSegmentDurationSeconds(chunk);
+  if (!Number.isFinite(duration) || duration < SEGMENT_SHORT_TEXT_MIN_SECONDS) {
+    return false;
+  }
+  const minChars = Math.max(
+    SEGMENT_SHORT_TEXT_MIN_CHARS,
+    Math.round(duration * SEGMENT_SHORT_TEXT_CHARS_PER_SECOND),
+  );
+  return trimmed.length < minChars;
 }
 
 function findTranscriptIssues(chunks, transcriptParts) {
@@ -683,9 +712,98 @@ function saveHistoryEntries() {
   }
 }
 
+function updateHistoryToggleLabel(isOpen) {
+  if (!elements.historyToggle) return;
+  const label = isOpen ? "Fermer l'historique" : "Ouvrir l'historique";
+  elements.historyToggle.setAttribute("aria-label", label);
+  elements.historyToggle.title = label;
+  const labelNode = elements.historyToggle.querySelector(".sr-only");
+  if (labelNode) {
+    labelNode.textContent = label;
+  }
+}
+
+function setHistoryDrawerOpen(isOpen) {
+  if (!elements.historyDrawer) return;
+  document.body.classList.toggle("history-open", isOpen);
+  elements.historyDrawer.setAttribute("aria-hidden", isOpen ? "false" : "true");
+  if (elements.historyBackdrop) {
+    elements.historyBackdrop.setAttribute("aria-hidden", isOpen ? "false" : "true");
+  }
+  if (elements.historyToggle) {
+    elements.historyToggle.setAttribute("aria-expanded", isOpen ? "true" : "false");
+  }
+  updateHistoryToggleLabel(isOpen);
+  if (isOpen && elements.historySearch && !elements.historySearch.disabled) {
+    elements.historySearch.focus();
+  }
+}
+
+function normalizeHistoryQuery(query) {
+  return (query || "").trim().toLowerCase();
+}
+
+function filterHistoryEntries(entries, query) {
+  const normalizedQuery = normalizeHistoryQuery(query);
+  if (!normalizedQuery) return entries;
+  return entries.filter((entry) => {
+    const haystack = `${entry.title} ${entry.fileName} ${entry.text}`.toLowerCase();
+    return haystack.includes(normalizedQuery);
+  });
+}
+
+function getHistoryPreview(text) {
+  if (typeof text !== "string") return "";
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  if (!cleaned) return "";
+  if (cleaned.length <= HISTORY_PREVIEW_CHARS) return cleaned;
+  return `${cleaned.slice(0, HISTORY_PREVIEW_CHARS)}...`;
+}
+
+function updateHistorySummary(filteredCount, totalCount, query) {
+  if (!elements.historyCount) return;
+  if (!state.historyEnabled) {
+    elements.historyCount.textContent = "Historique désactivé";
+    return;
+  }
+  if (!totalCount) {
+    elements.historyCount.textContent = "Aucune transcription";
+    return;
+  }
+  const suffix = totalCount > 1 ? "s" : "";
+  if (query) {
+    elements.historyCount.textContent = `${filteredCount} sur ${totalCount} transcription${suffix}`;
+  } else {
+    elements.historyCount.textContent = `${totalCount} transcription${suffix}`;
+  }
+}
+
+function updateHistoryControls() {
+  const hasHistory = state.history.length > 0;
+  const enabled = state.historyEnabled;
+  if (elements.historySearch) {
+    elements.historySearch.disabled = !enabled;
+  }
+  if (elements.historyClearBtn) {
+    elements.historyClearBtn.disabled = !enabled || !hasHistory;
+  }
+  if (elements.historyExportBtn) {
+    elements.historyExportBtn.disabled = !enabled || !hasHistory;
+  }
+}
+
+function setHistoryQuery(query) {
+  state.historyQuery = (query || "").trim();
+  renderHistory();
+}
+
 function renderHistory() {
   if (!elements.historyList) return;
   elements.historyList.innerHTML = "";
+  const query = state.historyQuery;
+  const filteredHistory = filterHistoryEntries(state.history, query);
+  updateHistorySummary(filteredHistory.length, state.history.length, query);
+  updateHistoryControls();
   if (!state.historyEnabled) {
     const empty = document.createElement("div");
     empty.className = "history-empty";
@@ -700,17 +818,41 @@ function renderHistory() {
     elements.historyList.appendChild(empty);
     return;
   }
+  if (query && !filteredHistory.length) {
+    const empty = document.createElement("div");
+    empty.className = "history-empty";
+    empty.textContent = `Aucun résultat pour "${query}".`;
+    elements.historyList.appendChild(empty);
+    return;
+  }
 
   const fragment = document.createDocumentFragment();
-  state.history.forEach((entry) => {
+  filteredHistory.forEach((entry) => {
     const item = document.createElement("div");
     item.className = `history-item${entry.id === state.activeHistoryId ? " active" : ""}`;
+    item.tabIndex = 0;
+    item.setAttribute("role", "button");
+    item.addEventListener("click", () => openHistoryEntry(entry.id));
+    item.addEventListener("keydown", (event) => {
+      if (event.target !== item) return;
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        openHistoryEntry(entry.id);
+      }
+    });
 
     const titleRow = document.createElement("div");
     titleRow.className = "history-title";
     const title = document.createElement("span");
+    title.className = "history-name";
     title.textContent = entry.title;
     titleRow.appendChild(title);
+    if (entry.id === state.activeHistoryId) {
+      const badge = document.createElement("span");
+      badge.className = "history-badge";
+      badge.textContent = "Actif";
+      titleRow.appendChild(badge);
+    }
 
     const metaRow = document.createElement("div");
     metaRow.className = "history-meta";
@@ -730,7 +872,17 @@ function renderHistory() {
     if (dateLabel) {
       metaParts.push(dateLabel);
     }
-    metaRow.textContent = metaParts.join(" · ");
+    metaParts.forEach((part) => {
+      const tag = document.createElement("span");
+      tag.className = "history-tag";
+      tag.textContent = part;
+      metaRow.appendChild(tag);
+    });
+
+    const previewText = getHistoryPreview(entry.text);
+    const preview = document.createElement("p");
+    preview.className = "history-preview";
+    preview.textContent = previewText;
 
     const actions = document.createElement("div");
     actions.className = "history-actions";
@@ -741,7 +893,21 @@ function renderHistory() {
     openBtn.title = "Ouvrir";
     openBtn.setAttribute("aria-label", "Ouvrir");
     openBtn.innerHTML = `${ICONS.open}<span class="sr-only">Ouvrir</span>`;
-    openBtn.addEventListener("click", () => openHistoryEntry(entry.id));
+    openBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openHistoryEntry(entry.id);
+    });
+
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className = "ghost icon";
+    copyBtn.title = "Copier";
+    copyBtn.setAttribute("aria-label", "Copier");
+    copyBtn.innerHTML = `${ICONS.copy}<span class="sr-only">Copier</span>`;
+    copyBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      copyHistoryEntry(entry.id);
+    });
 
     const renameBtn = document.createElement("button");
     renameBtn.type = "button";
@@ -749,7 +915,10 @@ function renderHistory() {
     renameBtn.title = "Renommer";
     renameBtn.setAttribute("aria-label", "Renommer");
     renameBtn.innerHTML = `${ICONS.rename}<span class="sr-only">Renommer</span>`;
-    renameBtn.addEventListener("click", () => renameHistoryEntry(entry.id));
+    renameBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      renameHistoryEntry(entry.id);
+    });
 
     const deleteBtn = document.createElement("button");
     deleteBtn.type = "button";
@@ -757,15 +926,22 @@ function renderHistory() {
     deleteBtn.title = "Supprimer";
     deleteBtn.setAttribute("aria-label", "Supprimer");
     deleteBtn.innerHTML = `${ICONS.delete}<span class="sr-only">Supprimer</span>`;
-    deleteBtn.addEventListener("click", () => deleteHistoryEntry(entry.id));
+    deleteBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      deleteHistoryEntry(entry.id);
+    });
 
     actions.appendChild(openBtn);
+    actions.appendChild(copyBtn);
     actions.appendChild(renameBtn);
     actions.appendChild(deleteBtn);
 
     item.appendChild(titleRow);
-    if (metaRow.textContent) {
+    if (metaParts.length) {
       item.appendChild(metaRow);
+    }
+    if (previewText) {
+      item.appendChild(preview);
     }
     item.appendChild(actions);
     fragment.appendChild(item);
@@ -850,6 +1026,17 @@ function openHistoryEntry(id) {
   setStatus(`Transcription chargée : ${entry.title}.`);
 }
 
+async function copyHistoryEntry(id) {
+  const entry = state.history.find((item) => item.id === id);
+  if (!entry) return;
+  try {
+    await navigator.clipboard.writeText(entry.text);
+    setStatus(`Transcription copiée : ${entry.title}.`);
+  } catch (error) {
+    setStatus("Impossible de copier la transcription.");
+  }
+}
+
 function renameHistoryEntry(id) {
   const entry = state.history.find((item) => item.id === id);
   if (!entry) return;
@@ -873,6 +1060,37 @@ function deleteHistoryEntry(id) {
   }
   saveHistoryEntries();
   renderHistory();
+}
+
+function clearHistoryEntries() {
+  if (!state.history.length) return;
+  const confirmed = window.confirm("Tout effacer de l'historique local ?");
+  if (!confirmed) return;
+  state.history = [];
+  state.activeHistoryId = null;
+  saveHistoryEntries();
+  renderHistory();
+  setStatus("Historique effacé.");
+}
+
+function exportHistoryEntries() {
+  if (!state.history.length) return;
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    entries: state.history,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {
+    type: "application/json;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `neurow-transcribe-historique-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+  setStatus("Historique exporté.");
 }
 
 function buildSegmentFilename(baseName, file, chunk) {
@@ -1376,7 +1594,38 @@ async function transcribeChunkWithRetry({
       throw new Error(message.trim());
     }
 
-    return response.json();
+    const data = await response.json();
+    const text = (data.text || "").trim();
+    if (isSuspiciousEmptyTranscript(chunk, text)) {
+      if (attempt < MAX_TRANSCRIBE_ATTEMPTS) {
+        const delayMs = getRetryDelayMs(attempt);
+        const delaySeconds = Math.round(delayMs / 100) / 10;
+        setStatus(
+          `Segment ${chunkIndex + 1}/${totalChunks} : transcription vide, nouvelle tentative dans ${delaySeconds}s.`,
+        );
+        await sleep(delayMs, signal);
+        continue;
+      }
+      throw new Error(
+        `Segment ${chunkIndex + 1}/${totalChunks} : transcription vide apres ${MAX_TRANSCRIBE_ATTEMPTS} tentative(s).`,
+      );
+    }
+    if (isSuspiciouslyShortTranscript(chunk, text)) {
+      if (attempt < MAX_TRANSCRIBE_ATTEMPTS) {
+        const delayMs = getRetryDelayMs(attempt);
+        const delaySeconds = Math.round(delayMs / 100) / 10;
+        setStatus(
+          `Segment ${chunkIndex + 1}/${totalChunks} : texte trop court, nouvelle tentative dans ${delaySeconds}s.`,
+        );
+        await sleep(delayMs, signal);
+        continue;
+      }
+      throw new Error(
+        `Segment ${chunkIndex + 1}/${totalChunks} : texte trop court (${text.length} caract.).`,
+      );
+    }
+
+    return data;
   }
   throw new Error("Echec transcription segment.");
 }
@@ -1444,7 +1693,12 @@ async function transcribe() {
     setProgressStatus(`Transcription : 0/${totalChunks} segment(s) termines.`);
     setProgressBar({ label: "Transcription en cours", current: 0, total: totalChunks });
 
-    const parallelLimit = Math.max(1, Math.min(MAX_PARALLEL_REQUESTS, totalChunks));
+    const parallelLimit = FORCE_SEQUENTIAL_TRANSCRIPTION
+      ? 1
+      : Math.max(1, Math.min(MAX_PARALLEL_REQUESTS, totalChunks));
+    if (FORCE_SEQUENTIAL_TRANSCRIPTION && totalChunks > 1) {
+      setStatus("Mode sequentiel actif : transcription segment par segment.", true);
+    }
     let completed = 0;
     let active = 0;
     let nextIndex = 0;
@@ -1762,6 +2016,50 @@ if (elements.themeButtons?.length) {
   });
 }
 
+if (elements.historyToggle) {
+  elements.historyToggle.addEventListener("click", () => {
+    const isOpen = document.body.classList.contains("history-open");
+    setHistoryDrawerOpen(!isOpen);
+  });
+}
+
+if (elements.historyBackdrop) {
+  elements.historyBackdrop.addEventListener("click", () => {
+    setHistoryDrawerOpen(false);
+  });
+}
+
+if (elements.historyCloseBtn) {
+  elements.historyCloseBtn.addEventListener("click", () => {
+    setHistoryDrawerOpen(false);
+  });
+}
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  if (document.body.classList.contains("history-open")) {
+    setHistoryDrawerOpen(false);
+  }
+});
+
+if (elements.historySearch) {
+  elements.historySearch.addEventListener("input", (event) => {
+    setHistoryQuery(event.target.value);
+  });
+}
+
+if (elements.historyClearBtn) {
+  elements.historyClearBtn.addEventListener("click", () => {
+    clearHistoryEntries();
+  });
+}
+
+if (elements.historyExportBtn) {
+  elements.historyExportBtn.addEventListener("click", () => {
+    exportHistoryEntries();
+  });
+}
+
 if (elements.historyEnabled) {
   elements.historyEnabled.addEventListener("change", (event) => {
     setHistoryEnabled(event.target.checked);
@@ -1810,6 +2108,7 @@ function loadStoredKey() {
 loadStoredKey();
 loadThemeChoice();
 loadHistoryState();
+setHistoryDrawerOpen(false);
 setSegmentsVisibility(false);
 clearStatus();
 setStatus("Prêt.", true);

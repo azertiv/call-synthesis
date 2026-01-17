@@ -27,9 +27,27 @@
     </div>
     <header class="hero">
       <div class="hero-top">
-        <div class="brand">
-          <span class="brand-dot"></span>
-          <span>Neurow.Transcribe</span>
+        <div class="hero-left">
+          <button
+            class="menu-toggle"
+            id="historyToggle"
+            type="button"
+            aria-label="Ouvrir l'historique"
+            aria-controls="historyDrawer"
+            aria-expanded="false"
+            title="Ouvrir l'historique"
+          >
+            <svg class="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 7h16" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8" />
+              <path d="M4 12h16" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8" />
+              <path d="M4 17h16" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8" />
+            </svg>
+            <span class="sr-only">Ouvrir l'historique</span>
+          </button>
+          <div class="brand">
+            <span class="brand-dot"></span>
+            <span>Neurow.Transcribe</span>
+          </div>
         </div>
         <div class="hero-controls">
           <div class="theme-switch" role="group" aria-label="Mode d'affichage">
@@ -147,6 +165,51 @@
         <h1>Neurow.Transcribe</h1>
       </div>
     </header>
+
+    <div class="history-backdrop" id="historyBackdrop" aria-hidden="true"></div>
+    <aside class="history-drawer" id="historyDrawer" aria-hidden="true" aria-label="Historique">
+      <div class="history-panel">
+        <div class="history-header">
+          <div class="history-heading">
+            <span class="section-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.6" />
+                <path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+              </svg>
+            </span>
+            <span>Historique</span>
+          </div>
+          <button class="ghost icon history-close" id="historyCloseBtn" type="button" aria-label="Fermer">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 6l12 12" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+              <path d="M18 6l-12 12" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+            </svg>
+            <span class="sr-only">Fermer</span>
+          </button>
+        </div>
+        <div class="history-summary">
+          <span class="history-count" id="historyCount">0 transcription</span>
+          <span class="history-caption">Stocké localement</span>
+        </div>
+        <div class="history-controls">
+          <label class="toggle">
+            <input type="checkbox" id="historyEnabled" />
+            <span>Historique local</span>
+          </label>
+          <div class="history-toolbar">
+            <button class="ghost small" id="historyClearBtn" type="button">Tout effacer</button>
+            <button class="ghost small" id="historyExportBtn" type="button">Exporter</button>
+          </div>
+        </div>
+        <label class="field history-search">
+          <span>Rechercher</span>
+          <input type="search" id="historySearch" placeholder="Titre, fichier, contenu..." />
+        </label>
+        <div class="history-list" id="historyList">
+          <div class="history-empty" id="historyEmpty">Historique désactivé.</div>
+        </div>
+      </div>
+    </aside>
 
     <main class="layout">
       <section class="panel upload">
@@ -325,27 +388,6 @@
         <div class="row end">
           <button class="ghost" id="copyBtn">Copier</button>
           <button class="ghost" id="downloadBtn">Télécharger</button>
-        </div>
-      </section>
-
-      <section class="panel history" id="historyPanel">
-        <div class="panel-header">
-          <h2>
-            <span class="section-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.6" />
-                <path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-              </svg>
-            </span>
-            <span>Historique</span>
-          </h2>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="historyEnabled" />
-          <span>Historique local</span>
-        </label>
-        <div class="history-list" id="historyList">
-          <div class="history-empty" id="historyEmpty">Historique désactivé.</div>
         </div>
       </section>
     </main>
