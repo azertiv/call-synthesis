@@ -1,4 +1,6 @@
 const MODEL_ID = "voxtral-mini-latest";
+const SUMMARY_MODEL_ID = "mistral-small-latest";
+const SUMMARY_ENDPOINT = "https://api.mistral.ai/v1/chat/completions";
 const PROVIDER_CONFIG = {
   label: "Mistral",
   endpoint: "https://api.mistral.ai/v1/audio/transcriptions",
@@ -54,6 +56,9 @@ const elements = {
   transcript: document.getElementById("transcript"),
   copyBtn: document.getElementById("copyBtn"),
   downloadBtn: document.getElementById("downloadBtn"),
+  summarizeBtn: document.getElementById("summarizeBtn"),
+  downloadSummaryBtn: document.getElementById("downloadSummaryBtn"),
+  summaryOutput: document.getElementById("summaryOutput"),
   tokensInput: document.getElementById("tokensInput"),
   tokensOutput: document.getElementById("tokensOutput"),
   tokensTotal: document.getElementById("tokensTotal"),
@@ -94,6 +99,8 @@ const state = {
   historyEnabled: true,
   historyQuery: "",
   activeHistoryId: null,
+  summaryText: "",
+  summaryProcessing: false,
 };
 
 const ffmpegState = {
@@ -346,6 +353,7 @@ function setProcessing(isProcessing) {
   if (elements.cancelBtn) {
     elements.cancelBtn.disabled = !isProcessing;
   }
+  updateSummaryControls();
 }
 
 function setTokens({ input, output, total, estimate }) {
@@ -364,6 +372,204 @@ function estimateTokens(text) {
 function updateUsageHint() {
   if (!elements.usageHint) return;
   elements.usageHint.textContent = state.usageSeen ? "Usage API." : "Estimation locale.";
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function formatSummaryHtml(text) {
+  const escaped = escapeHtml(text);
+  return escaped.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+}
+
+function stripBoldMarkers(text) {
+  return text.replace(/\*\*/g, "");
+}
+
+function setSummaryText(text) {
+  const normalized = typeof text === "string" ? text.trim() : "";
+  state.summaryText = normalized;
+  if (!elements.summaryOutput) return;
+  if (!normalized) {
+    elements.summaryOutput.classList.add("is-empty");
+    elements.summaryOutput.textContent = "La synthèse apparaîtra ici...";
+    updateSummaryControls();
+    return;
+  }
+  elements.summaryOutput.classList.remove("is-empty");
+  elements.summaryOutput.innerHTML = formatSummaryHtml(normalized);
+  updateSummaryControls();
+}
+
+function clearSummary() {
+  setSummaryText("");
+}
+
+function updateSummaryControls() {
+  const transcriptText = elements.transcript?.value?.trim() || "";
+  const canSummarize =
+    Boolean(transcriptText) && !state.processing && !state.summaryProcessing;
+  if (elements.summarizeBtn) {
+    elements.summarizeBtn.disabled = !canSummarize;
+    elements.summarizeBtn.textContent = state.summaryProcessing
+      ? "Synthèse..."
+      : "Générer la synthèse";
+  }
+  if (elements.downloadSummaryBtn) {
+    elements.downloadSummaryBtn.disabled = !state.summaryText || state.summaryProcessing;
+  }
+}
+
+function buildSummaryMessages(transcript) {
+  const system = [
+    "Tu es un assistant expert en synthèse de calls professionnels.",
+    "Tu écris en français clair, précis et factuel.",
+  ].join(" ");
+  const user = `Rédige une synthèse détaillée du call à partir de la transcription ci-dessous.
+
+Contraintes de format strictes :
+- Réponds uniquement avec ces sections, dans cet ordre :
+Key points:
+Summary:
+- Ajoute "Todolist:" après "Summary" uniquement si des actions explicites sont mentionnées.
+- Utilise exactement les libellés "Key points:", "Summary:" et "Todolist:" (si présent), chacun sur sa propre ligne.
+- "Key points" : liste de points principaux, une information par ligne, avec "-" pour chaque bullet point.
+- "Summary" : sections numérotées "1. Titre", "2. Titre", ... puis des bullet points avec "-".
+- "Todolist" : uniquement des tâches concrètes et actionnables mentionnées explicitement dans le call.
+- Mets en **gras** les éléments importants (noms, décisions, chiffres, dates, deadlines, livrables, risques).
+- Pas d'autre mise en forme que les numéros, les bullet points et le **gras**.
+- Pas de phrases d'introduction ou de conclusion.
+- Pas de verbes de parole (ex : "il dit", "elle précise", "ils mentionnent").
+- Reformulation directe, sans remplissage.
+- Corrige les erreurs évidentes de la transcription en t'appuyant sur le contexte, sans inventer d'informations.
+
+Transcription :
+${transcript}`;
+  return [
+    { role: "system", content: system },
+    { role: "user", content: user },
+  ];
+}
+
+async function requestSummary({ apiKey, transcript }) {
+  const response = await fetch(SUMMARY_ENDPOINT, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: SUMMARY_MODEL_ID,
+      messages: buildSummaryMessages(transcript),
+      temperature: 0.2,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    const parsedMessage = extractApiErrorMessage(errorText);
+    const message = parsedMessage || errorText || `Erreur API ${PROVIDER_CONFIG.label}.`;
+    throw new Error(message.trim());
+  }
+
+  const data = await response.json();
+  const content = data?.choices?.[0]?.message?.content;
+  if (typeof content !== "string" || !content.trim()) {
+    throw new Error("Réponse de synthèse vide.");
+  }
+  return {
+    text: content.trim(),
+    usage: data.usage,
+  };
+}
+
+async function summarizeTranscript() {
+  const apiKey = elements.apiKey.value.trim();
+  const transcriptText = elements.transcript.value.trim();
+
+  if (!apiKey) {
+    clearStatus();
+    setStatus(`Veuillez renseigner votre clé API ${PROVIDER_CONFIG.label}.`);
+    return;
+  }
+  if (!transcriptText) {
+    setStatus("Aucune transcription à synthétiser.");
+    return;
+  }
+  if (state.summaryProcessing) {
+    return;
+  }
+
+  state.summaryProcessing = true;
+  updateSummaryControls();
+  setStatus("Synthèse en cours...");
+
+  try {
+    const result = await requestSummary({ apiKey, transcript: transcriptText });
+    setSummaryText(result.text);
+    setStatus("Synthèse générée.");
+  } catch (error) {
+    setStatus("Erreur pendant la synthèse.");
+    const message = error instanceof Error ? error.message : String(error);
+    setStatus(message);
+  } finally {
+    state.summaryProcessing = false;
+    updateSummaryControls();
+  }
+}
+
+function buildSummaryFilename() {
+  const baseName = sanitizeBaseName(state.file?.name || "");
+  const safeBase = baseName && baseName !== "audio" ? baseName : "synthese";
+  const date = new Date().toISOString().slice(0, 10);
+  return `${safeBase}-synthese-${date}.pdf`;
+}
+
+function downloadSummaryPdf() {
+  const summaryText = state.summaryText.trim();
+  if (!summaryText) return;
+  const { jsPDF } = window.jspdf || {};
+  if (!jsPDF) {
+    setStatus("Bibliothèque PDF indisponible.");
+    return;
+  }
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+  const margin = 48;
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const fontSize = 11;
+  const lineHeight = Math.round(fontSize * 1.5);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(fontSize);
+
+  const cleanText = stripBoldMarkers(summaryText);
+  const maxWidth = pageWidth - margin * 2;
+  const blocks = cleanText.split(/\r?\n/);
+  const lines = [];
+  blocks.forEach((block) => {
+    if (!block) {
+      lines.push("");
+      return;
+    }
+    lines.push(...doc.splitTextToSize(block, maxWidth));
+  });
+  let cursorY = margin;
+  lines.forEach((line) => {
+    if (cursorY + lineHeight > pageHeight - margin) {
+      doc.addPage();
+      cursorY = margin;
+    }
+    doc.text(line, margin, cursorY);
+    cursorY += lineHeight;
+  });
+  doc.save(buildSummaryFilename());
+  setStatus("Synthèse PDF téléchargée.");
 }
 
 function applyUsage(usage) {
@@ -777,6 +983,7 @@ function openHistoryEntry(id) {
   const entry = state.history.find((item) => item.id === id);
   if (!entry) return;
   elements.transcript.value = entry.text;
+  clearSummary();
   const estimatedTokens = entry.tokens?.estimate || estimateTokens(entry.text);
   if (entry.usageSeen) {
     state.usage = {
@@ -941,6 +1148,7 @@ function setFile(file) {
   state.prepared = null;
   setProcessing(state.processing);
   elements.transcript.value = "";
+  clearSummary();
   setTokens({ input: "—", output: "—", total: "—", estimate: "—" });
   updateUsageHint();
   clearSegments();
@@ -969,6 +1177,7 @@ function setFile(file) {
 
 function resetTranscriptionState() {
   elements.transcript.value = "";
+  clearSummary();
   setTokens({ input: "—", output: "—", total: "—", estimate: "—" });
   state.usage = { input: 0, output: 0, total: 0 };
   state.usageSeen = false;
@@ -1749,6 +1958,18 @@ elements.downloadBtn.addEventListener("click", () => {
   URL.revokeObjectURL(url);
 });
 
+if (elements.summarizeBtn) {
+  elements.summarizeBtn.addEventListener("click", () => {
+    summarizeTranscript();
+  });
+}
+
+if (elements.downloadSummaryBtn) {
+  elements.downloadSummaryBtn.addEventListener("click", () => {
+    downloadSummaryPdf();
+  });
+}
+
 function isFileDrag(event) {
   const types = event.dataTransfer?.types;
   if (!types) return false;
@@ -1941,5 +2162,7 @@ loadThemeChoice();
 loadHistoryState();
 setHistoryPanelOpen(true);
 setSegmentsVisibility(false);
+clearSummary();
+updateSummaryControls();
 clearStatus();
 setStatus("Prêt.", true);

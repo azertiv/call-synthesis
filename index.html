@@ -395,11 +395,34 @@
           <button class="ghost" id="copyBtn">Copier</button>
           <button class="ghost" id="downloadBtn">Télécharger</button>
         </div>
+        <div class="panel-divider" role="presentation"></div>
+        <div class="summary-block">
+          <div class="summary-header">
+            <div class="summary-title">
+              <span class="section-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M6 6h12" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                  <path d="M6 12h9" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                  <path d="M6 18h7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                </svg>
+              </span>
+              <span>Synthèse</span>
+            </div>
+            <div class="row summary-actions">
+              <button class="primary" id="summarizeBtn" disabled>Générer la synthèse</button>
+              <button class="ghost" id="downloadSummaryBtn" disabled>Télécharger PDF</button>
+            </div>
+          </div>
+          <div class="summary-output is-empty" id="summaryOutput" aria-live="polite">
+            La synthèse apparaîtra ici...
+          </div>
+        </div>
         </section>
       </div>
     </main>
 
     <script src="vendor/ffmpeg/ffmpeg.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
     <script src="app.js"></script>
   </body>
 </html>
