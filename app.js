@@ -7,7 +7,7 @@ const MAX_PARALLEL_REQUESTS = 3;
 const MAX_TRANSCRIBE_ATTEMPTS = 3;
 const RETRY_BACKOFF_BASE_MS = 700;
 const RETRY_BACKOFF_MAX_MS = 8000;
-const SEGMENT_TARGET_MINUTES = 24;
+const SEGMENT_TARGET_MINUTES = 20;
 const SEGMENT_TARGET_SECONDS = SEGMENT_TARGET_MINUTES * 60;
 const SEGMENT_OVERLAP_SECONDS = 10;
 const FFMPEG_BASE_PATH = "vendor/ffmpeg/";
@@ -22,6 +22,15 @@ const HISTORY_LIMIT = 30;
 const OVERLAP_MIN_WORDS = 6;
 const OVERLAP_MAX_WORDS = 80;
 
+const ICONS = {
+  open:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"/><path d="M12 5h7v7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"/><path d="M11 13L19 5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"/></svg>',
+  rename:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"/></svg>',
+  delete:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6"/><path d="M9 7V5h6v2" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6"/><path d="M7 7l1 12h8l1-12" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"/><path d="M10 11v6" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6"/><path d="M14 11v6" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6"/></svg>',
+};
+
 const elements = {
   apiKey: document.getElementById("apiKey"),
   rememberKey: document.getElementById("rememberKey"),
@@ -33,7 +42,6 @@ const elements = {
   fileMeta: document.getElementById("fileMeta"),
   audioPreview: document.getElementById("audioPreview"),
   transcribeBtn: document.getElementById("transcribeBtn"),
-  testBtn: document.getElementById("testBtn"),
   cancelBtn: document.getElementById("cancelBtn"),
   statusLog: document.getElementById("statusLog"),
   transcript: document.getElementById("transcript"),
@@ -44,7 +52,10 @@ const elements = {
   tokensTotal: document.getElementById("tokensTotal"),
   tokensEstimate: document.getElementById("tokensEstimate"),
   usageHint: document.getElementById("usageHint"),
+  segmentsPanel: document.getElementById("segmentsPanel"),
   segmentsList: document.getElementById("segmentsList"),
+  segmentsToggleBtn: document.getElementById("toggleSegmentsBtn"),
+  segmentsCount: document.getElementById("segmentsCount"),
   downloadSegmentsBtn: document.getElementById("downloadSegmentsBtn"),
   themeButtons: document.querySelectorAll("[data-theme-choice]"),
   historyPanel: document.getElementById("historyPanel"),
@@ -64,6 +75,8 @@ const state = {
   cancelRequested: false,
   segments: [],
   segmentUrls: [],
+  prepared: null,
+  segmentsVisible: false,
   history: [],
   historyEnabled: true,
   activeHistoryId: null,
@@ -303,9 +316,6 @@ function setProcessing(isProcessing) {
   state.processing = isProcessing;
   const hasFile = Boolean(state.file);
   elements.transcribeBtn.disabled = isProcessing || !hasFile;
-  if (elements.testBtn) {
-    elements.testBtn.disabled = isProcessing || !hasFile;
-  }
   if (elements.cancelBtn) {
     elements.cancelBtn.disabled = !isProcessing;
   }
@@ -325,9 +335,8 @@ function estimateTokens(text) {
 }
 
 function updateUsageHint() {
-  elements.usageHint.textContent = state.usageSeen
-    ? "Usage fourni par l'API."
-    : "L'estimation se base sur le texte si l'API ne renvoie pas l'usage.";
+  if (!elements.usageHint) return;
+  elements.usageHint.textContent = state.usageSeen ? "Usage API." : "Estimation locale.";
 }
 
 function applyUsage(usage) {
@@ -348,6 +357,32 @@ function applyUsage(usage) {
   updateUsageHint();
 }
 
+function updateSegmentsCount() {
+  if (!elements.segmentsCount) return;
+  const count = state.segments.length;
+  elements.segmentsCount.textContent = count ? String(count) : "—";
+}
+
+function setSegmentsVisibility(visible) {
+  state.segmentsVisible = Boolean(visible);
+  if (elements.segmentsPanel) {
+    elements.segmentsPanel.classList.toggle("is-collapsed", !state.segmentsVisible);
+  }
+  if (elements.segmentsToggleBtn) {
+    const label = state.segmentsVisible ? "Masquer les segments" : "Afficher les segments";
+    elements.segmentsToggleBtn.setAttribute(
+      "aria-expanded",
+      state.segmentsVisible ? "true" : "false",
+    );
+    elements.segmentsToggleBtn.setAttribute("aria-label", label);
+    elements.segmentsToggleBtn.title = label;
+    const labelNode = elements.segmentsToggleBtn.querySelector(".sr-only");
+    if (labelNode) {
+      labelNode.textContent = label;
+    }
+  }
+}
+
 function clearSegments() {
   state.segments = [];
   if (state.segmentUrls.length) {
@@ -357,10 +392,11 @@ function clearSegments() {
   }
   state.segmentUrls = [];
   if (!elements.segmentsList) return;
-  elements.segmentsList.innerHTML = '<div class="segments-empty">Aucun segment généré.</div>';
+  elements.segmentsList.innerHTML = '<div class="segments-empty">Aucun segment.</div>';
   if (elements.downloadSegmentsBtn) {
     elements.downloadSegmentsBtn.disabled = true;
   }
+  updateSegmentsCount();
 }
 
 function loadHistoryEntries() {
@@ -467,20 +503,26 @@ function renderHistory() {
 
     const openBtn = document.createElement("button");
     openBtn.type = "button";
-    openBtn.className = "ghost small";
-    openBtn.textContent = "Ouvrir";
+    openBtn.className = "ghost icon";
+    openBtn.title = "Ouvrir";
+    openBtn.setAttribute("aria-label", "Ouvrir");
+    openBtn.innerHTML = `${ICONS.open}<span class="sr-only">Ouvrir</span>`;
     openBtn.addEventListener("click", () => openHistoryEntry(entry.id));
 
     const renameBtn = document.createElement("button");
     renameBtn.type = "button";
-    renameBtn.className = "ghost small";
-    renameBtn.textContent = "Renommer";
+    renameBtn.className = "ghost icon";
+    renameBtn.title = "Renommer";
+    renameBtn.setAttribute("aria-label", "Renommer");
+    renameBtn.innerHTML = `${ICONS.rename}<span class="sr-only">Renommer</span>`;
     renameBtn.addEventListener("click", () => renameHistoryEntry(entry.id));
 
     const deleteBtn = document.createElement("button");
     deleteBtn.type = "button";
-    deleteBtn.className = "ghost small";
-    deleteBtn.textContent = "Supprimer";
+    deleteBtn.className = "ghost icon";
+    deleteBtn.title = "Supprimer";
+    deleteBtn.setAttribute("aria-label", "Supprimer");
+    deleteBtn.innerHTML = `${ICONS.delete}<span class="sr-only">Supprimer</span>`;
     deleteBtn.addEventListener("click", () => deleteHistoryEntry(entry.id));
 
     actions.appendChild(openBtn);
@@ -655,6 +697,7 @@ function setSegments(chunks, file) {
   if (elements.downloadSegmentsBtn) {
     elements.downloadSegmentsBtn.disabled = false;
   }
+  updateSegmentsCount();
 }
 
 function setFile(file) {
@@ -662,14 +705,16 @@ function setFile(file) {
   state.durationSeconds = null;
   state.usage = { input: 0, output: 0, total: 0 };
   state.usageSeen = false;
+  state.prepared = null;
   setProcessing(state.processing);
   elements.transcript.value = "";
   setTokens({ input: "—", output: "—", total: "—", estimate: "—" });
   updateUsageHint();
   clearSegments();
+  setSegmentsVisibility(false);
 
   if (!file) {
-    elements.fileMeta.textContent = "Aucun fichier chargé.";
+    elements.fileMeta.textContent = "Aucun fichier.";
     if (state.objectUrl) {
       URL.revokeObjectURL(state.objectUrl);
       state.objectUrl = null;
@@ -686,6 +731,7 @@ function setFile(file) {
   state.objectUrl = URL.createObjectURL(file);
   elements.audioPreview.src = state.objectUrl;
   elements.audioPreview.hidden = false;
+  void analyzeFile(file);
 }
 
 function resetTranscriptionState() {
@@ -982,6 +1028,39 @@ async function prepareFile(file, options = {}) {
   return ffmpegSegmentByDuration(file, duration, { signal });
 }
 
+async function analyzeFile(file) {
+  if (!file || state.processing) return;
+  state.cancelRequested = false;
+  setProcessing(true);
+  clearStatus();
+  setStatus("Analyse du fichier audio…");
+
+  const controller = new AbortController();
+  state.abortController = controller;
+
+  try {
+    const prepared = await prepareFile(file, { signal: controller.signal });
+    if (state.file !== file) return;
+    state.prepared = { ...prepared, file };
+    setSegments(prepared.chunks, file);
+    if (!prepared.usedOriginal) {
+      setStatus(`Taille finale : ${formatBytes(prepared.totalSize)}.`);
+    }
+  } catch (error) {
+    if (state.cancelRequested || isAbortError(error)) {
+      setStatus("Analyse annulee.");
+    } else {
+      setStatus("Erreur pendant l'analyse.");
+      const message = error instanceof Error ? error.message : String(error);
+      setStatus(message);
+    }
+  } finally {
+    state.cancelRequested = false;
+    setProcessing(false);
+    state.abortController = null;
+  }
+}
+
 function cancelTranscription() {
   if (!state.processing || !state.abortController) return;
   state.cancelRequested = true;
@@ -1089,9 +1168,16 @@ async function transcribe() {
     state.abortController = controller;
     const { signal } = controller;
 
-    const { chunks, totalSize, usedOriginal } = await prepareFile(file, { signal });
-    setSegments(chunks, file);
-    if (!usedOriginal) {
+    const cached = state.prepared && state.prepared.file === file;
+    const prepared = cached ? state.prepared : await prepareFile(file, { signal });
+    if (!cached) {
+      state.prepared = { ...prepared, file };
+    }
+    const { chunks, totalSize, usedOriginal } = prepared;
+    if (!state.segments.length) {
+      setSegments(chunks, file);
+    }
+    if (!usedOriginal && !cached) {
       setStatus(`Taille finale : ${formatBytes(totalSize)}.`);
     }
 
@@ -1205,41 +1291,8 @@ async function transcribe() {
   } finally {
     state.cancelRequested = false;
     setProcessing(false);
-    elements.transcribeBtn.textContent = "Transcrire le call";
+    elements.transcribeBtn.textContent = "Transcrire";
     state.abortController = null;
-  }
-}
-
-async function testSegmentation() {
-  const file = state.file;
-  if (!file) {
-    clearStatus();
-    setStatus("Veuillez sélectionner un fichier audio.");
-    return;
-  }
-
-  setProcessing(true);
-  if (elements.testBtn) {
-    elements.testBtn.textContent = "Test en cours...";
-  }
-  clearStatus();
-  setStatus("Test découpage/segmentation (aucun appel API).");
-
-  try {
-    const { chunks, totalSize } = await prepareFile(file);
-    setSegments(chunks, file);
-    setStatus(
-      `Test terminé : ${chunks.length} segment(s) · ${formatBytes(totalSize)}.`,
-    );
-  } catch (error) {
-    setStatus("Erreur pendant le test.");
-    const message = error instanceof Error ? error.message : String(error);
-    setStatus(message);
-  } finally {
-    setProcessing(false);
-    if (elements.testBtn) {
-      elements.testBtn.textContent = "Tester découpage";
-    }
   }
 }
 
@@ -1282,12 +1335,6 @@ if (elements.cancelBtn) {
   });
 }
 
-if (elements.testBtn) {
-  elements.testBtn.addEventListener("click", () => {
-    testSegmentation();
-  });
-}
-
 if (elements.downloadSegmentsBtn) {
   elements.downloadSegmentsBtn.addEventListener("click", () => {
     if (!state.segments.length) return;
@@ -1300,6 +1347,12 @@ if (elements.downloadSegmentsBtn) {
       document.body.removeChild(link);
     }
     setStatus("Téléchargement des segments lancé.");
+  });
+}
+
+if (elements.segmentsToggleBtn) {
+  elements.segmentsToggleBtn.addEventListener("click", () => {
+    setSegmentsVisibility(!state.segmentsVisible);
   });
 }
 
@@ -1480,5 +1533,6 @@ function loadStoredKey() {
 loadStoredKey();
 loadThemeChoice();
 loadHistoryState();
+setSegmentsVisibility(false);
 clearStatus();
-setStatus("Prêt pour une transcription.", true);
+setStatus("Prêt.", true);

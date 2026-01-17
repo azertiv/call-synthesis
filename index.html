@@ -4,11 +4,8 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
-    <title>Call Synthesis — Transcription iOS + Mistral</title>
-    <meta
-      name="description"
-      content="Transcrivez vos mémos vocaux iOS avec Mistral Voxtral Mini Transcribe, gérez la durée et suivez l'usage des tokens."
-    />
+    <title>Neurow.Transcribe</title>
+    <meta name="description" content="Transcription audio locale avec Mistral." />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -24,8 +21,7 @@
       <div class="global-drop-card">
         <div class="global-drop-icon">⬆</div>
         <div>
-          <strong>Déposez votre fichier audio</strong>
-          <span>Le fichier sera chargé immédiatement.</span>
+          <strong>Déposez un fichier audio</strong>
         </div>
       </div>
     </div>
@@ -33,158 +29,179 @@
       <div class="hero-top">
         <div class="brand">
           <span class="brand-dot"></span>
-          <span>Call Synthesis</span>
+          <span>Neurow.Transcribe</span>
         </div>
-        <div class="theme-switch" role="group" aria-label="Mode d'affichage">
-          <button
-            class="theme-btn"
-            type="button"
-            data-theme-choice="system"
-            aria-pressed="true"
-            title="Mode système"
-          >
-            <svg class="theme-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <rect x="3" y="4.5" width="18" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.6" />
-              <path d="M8 20h8" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-              <path d="M12 16.5v3.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-            </svg>
-            <span class="sr-only">Système</span>
-          </button>
-          <button
-            class="theme-btn"
-            type="button"
-            data-theme-choice="light"
-            aria-pressed="false"
-            title="Mode clair"
-          >
-            <svg class="theme-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6" />
-              <path d="M12 3v2.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-              <path d="M12 18.5V21" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-              <path d="M4.2 6.2l1.8 1.8" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-              <path d="M18 18l1.8 1.8" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-              <path d="M3 12h2.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-              <path d="M18.5 12H21" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-              <path d="M4.2 17.8l1.8-1.8" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-              <path d="M18 6l1.8-1.8" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-            </svg>
-            <span class="sr-only">Clair</span>
-          </button>
-          <button
-            class="theme-btn"
-            type="button"
-            data-theme-choice="dark"
-            aria-pressed="false"
-            title="Mode sombre"
-          >
-            <svg class="theme-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                d="M20 14.5A7.5 7.5 0 1 1 9.5 4 6.5 6.5 0 0 0 20 14.5Z"
-                fill="none"
-                stroke="currentColor"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="1.6"
-              />
-            </svg>
-            <span class="sr-only">Sombre</span>
-          </button>
+        <div class="hero-controls">
+          <div class="theme-switch" role="group" aria-label="Mode d'affichage">
+            <button
+              class="theme-btn"
+              type="button"
+              data-theme-choice="system"
+              aria-pressed="true"
+              title="Mode système"
+            >
+              <svg class="theme-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3" y="4.5" width="18" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.6" />
+                <path d="M8 20h8" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                <path d="M12 16.5v3.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+              </svg>
+              <span class="sr-only">Système</span>
+            </button>
+            <button
+              class="theme-btn"
+              type="button"
+              data-theme-choice="light"
+              aria-pressed="false"
+              title="Mode clair"
+            >
+              <svg class="theme-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6" />
+                <path d="M12 3v2.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                <path d="M12 18.5V21" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                <path d="M4.2 6.2l1.8 1.8" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                <path d="M18 18l1.8 1.8" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                <path d="M3 12h2.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                <path d="M18.5 12H21" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                <path d="M4.2 17.8l1.8-1.8" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                <path d="M18 6l1.8-1.8" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+              </svg>
+              <span class="sr-only">Clair</span>
+            </button>
+            <button
+              class="theme-btn"
+              type="button"
+              data-theme-choice="dark"
+              aria-pressed="false"
+              title="Mode sombre"
+            >
+              <svg class="theme-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M20 14.5A7.5 7.5 0 1 1 9.5 4 6.5 6.5 0 0 0 20 14.5Z"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="1.6"
+                />
+              </svg>
+              <span class="sr-only">Sombre</span>
+            </button>
+          </div>
+          <details class="settings" id="settingsPanel">
+            <summary class="settings-toggle" title="Paramètres">
+              <svg class="theme-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M12 8.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7Z"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                />
+                <path
+                  d="M4.8 13.2l-1.2-2.1 2-1.2a7.8 7.8 0 0 1 0-1.8l-2-1.2 1.2-2.1 2.2.6a8 8 0 0 1 1.5-1.1l-.3-2.2h2.4l-.3 2.2a8 8 0 0 1 1.5 1.1l2.2-.6 1.2 2.1-2 1.2a7.8 7.8 0 0 1 0 1.8l2 1.2-1.2 2.1-2.2-.6a8 8 0 0 1-1.5 1.1l.3 2.2h-2.4l.3-2.2a8 8 0 0 1-1.5-1.1l-2.2.6Z"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-linejoin="round"
+                  stroke-width="1.2"
+                />
+              </svg>
+              <span class="sr-only">Paramètres</span>
+            </summary>
+            <div class="settings-card">
+              <div class="settings-title">
+                <span class="section-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M4 7h10" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                    <path d="M4 17h10" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                    <circle cx="17" cy="7" r="2.5" fill="none" stroke="currentColor" stroke-width="1.6" />
+                    <circle cx="17" cy="17" r="2.5" fill="none" stroke="currentColor" stroke-width="1.6" />
+                  </svg>
+                </span>
+                <span>Paramètres</span>
+              </div>
+              <label class="field">
+                <span>Clé API (Mistral)</span>
+                <input
+                  type="password"
+                  id="apiKey"
+                  autocomplete="off"
+                  placeholder="sk-..."
+                  spellcheck="false"
+                />
+              </label>
+              <div class="row">
+                <label class="toggle">
+                  <input type="checkbox" id="rememberKey" />
+                  <span>Mémoriser sur cet appareil</span>
+                </label>
+                <button class="ghost" id="clearKey">Effacer</button>
+              </div>
+              <label class="field">
+                <span>Langue (optionnel)</span>
+                <input type="text" id="language" placeholder="fr, en, es..." />
+              </label>
+            </div>
+          </details>
         </div>
       </div>
       <div class="hero-text">
-        <h1>Votre dictaphone iOS, une transcription claire et rapide.</h1>
-        <p>
-          Importez vos fichiers depuis Fichiers, utilisez votre clé Mistral, et obtenez une
-          transcription complète avec suivi des tokens. Tout reste dans votre navigateur.
-        </p>
-      </div>
-      <div class="hero-meta">
-        <div>
-          <span class="meta-title">Hébergé sur GitHub Pages</span>
-          <span class="meta-detail">Aucune infra serveur nécessaire</span>
-        </div>
-        <div>
-          <span class="meta-title">Limite durée</span>
-          <span class="meta-detail">Découpe dès 24 min (limite 30 min)</span>
-        </div>
+        <h1>Neurow.Transcribe</h1>
       </div>
     </header>
 
     <main class="layout">
-      <section class="panel config">
-        <div class="panel-header">
-          <h2>Configuration</h2>
-          <p>Vos clés ne quittent pas votre navigateur.</p>
-        </div>
-        <label class="field">
-          <span>Clé API (Mistral)</span>
-          <input
-            type="password"
-            id="apiKey"
-            autocomplete="off"
-            placeholder="sk-..."
-            spellcheck="false"
-          />
-        </label>
-        <div class="hint">Modèle utilisé : Voxtral Mini Transcribe (Mistral).</div>
-        <div class="price-card">
-          <span class="price-label">Prix estimé</span>
-          <span class="price-value">Audio Input/min $0.002 (Voxtral Mini Transcribe)</span>
-        </div>
-        <div class="row">
-          <label class="toggle">
-            <input type="checkbox" id="rememberKey" />
-            <span>Mémoriser sur cet appareil</span>
-          </label>
-          <button class="ghost" id="clearKey">Effacer</button>
-        </div>
-        <label class="field">
-          <span>Langue (optionnel)</span>
-          <input type="text" id="language" placeholder="fr, en, es..." />
-        </label>
-        <div class="hint">
-          FFmpeg est utilisé uniquement si la durée dépasse 24 minutes (découpe locale, pas de backend).
-          Chevauchement de 10s pour éviter les coupures. Premier chargement FFmpeg : ~32 Mo.
-        </div>
-        <div class="notice">
-          <strong>Conseil</strong> : pour un meilleur résultat, utilisez un fichier clair et peu
-          bruité. Les fichiers &gt; 24 minutes sont segmentés automatiquement.
-        </div>
-      </section>
-
       <section class="panel upload">
         <div class="panel-header">
-          <h2>Importer un fichier audio</h2>
-          <p>Formats acceptés : m4a, mp3, wav, mp4, webm.</p>
+          <h2>
+            <span class="section-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 16V4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                <path d="M7 9l5-5 5 5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                <path d="M5 20h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+              </svg>
+            </span>
+            <span>Importer un fichier audio</span>
+          </h2>
         </div>
         <div class="dropzone" id="dropzone">
           <input type="file" id="fileInput" accept="audio/*" />
           <div class="drop-content">
             <div class="drop-icon">⬆</div>
             <div>
-              <strong>Glissez votre fichier</strong>
-              <span>ou cliquez pour sélectionner</span>
+              <strong>Glissez ou cliquez</strong>
+              <span>m4a, mp3, wav, mp4, webm</span>
             </div>
           </div>
         </div>
         <div class="file-meta" id="fileMeta">
-          <span>Aucun fichier chargé.</span>
+          <span>Aucun fichier.</span>
         </div>
         <audio id="audioPreview" controls hidden></audio>
         <div class="row">
-          <button class="primary" id="transcribeBtn" disabled>Transcrire le call</button>
-          <button class="ghost" id="testBtn" disabled>Tester découpage</button>
+          <button class="primary" id="transcribeBtn" disabled>Transcrire</button>
           <button class="ghost" id="cancelBtn" disabled>Annuler</button>
         </div>
       </section>
 
       <section class="panel status">
         <div class="panel-header">
-          <h2>Statut &amp; usage</h2>
-          <p>Suivi du traitement et des tokens.</p>
+          <h2>
+            <span class="section-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M3 12h4l2.5-5 4 10 2-5H21"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="1.6"
+                />
+              </svg>
+            </span>
+            <span>Statut &amp; usage</span>
+          </h2>
         </div>
         <div class="status-log" id="statusLog">
-          <div class="status-line idle">En attente d'un fichier.</div>
+          <div class="status-line idle">En attente.</div>
         </div>
         <div class="stats">
           <div>
@@ -204,22 +221,88 @@
             <span class="stat-value" id="tokensEstimate">—</span>
           </div>
         </div>
-        <div class="hint" id="usageHint">L'estimation se base sur le texte si l'API ne renvoie pas l'usage.</div>
-        <div class="segments">
+        <div class="hint" id="usageHint">Estimation locale.</div>
+        <div class="segments is-collapsed" id="segmentsPanel">
           <div class="segments-header">
-            <span>Segments générés</span>
-            <button class="ghost" id="downloadSegmentsBtn" disabled>Télécharger tout</button>
+            <div class="segments-title">
+              <span class="section-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <rect x="4" y="6" width="16" height="3" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6" />
+                  <rect x="4" y="11" width="16" height="3" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6" />
+                  <rect x="4" y="16" width="12" height="3" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6" />
+                </svg>
+              </span>
+              <span>Segments</span>
+              <span class="segments-count" id="segmentsCount">—</span>
+            </div>
+            <div class="segments-actions">
+              <button
+                class="ghost icon segments-toggle"
+                id="toggleSegmentsBtn"
+                type="button"
+                aria-controls="segmentsList"
+                aria-expanded="false"
+                title="Afficher les segments"
+              >
+                <svg class="icon-show" viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="1.6"
+                  />
+                  <circle cx="12" cy="12" r="2.8" fill="none" stroke="currentColor" stroke-width="1.6" />
+                </svg>
+                <svg class="icon-hide" viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M3 5l18 14"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-linecap="round"
+                    stroke-width="1.6"
+                  />
+                  <path
+                    d="M4.5 7.5C2.9 9 2 10.5 2 12s3.5 6 10 6c2.2 0 4.1-.5 5.7-1.3"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="1.6"
+                  />
+                  <path
+                    d="M9 9.2a3.5 3.5 0 0 1 5.1 4.8"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="1.6"
+                  />
+                </svg>
+                <span class="sr-only">Afficher les segments</span>
+              </button>
+              <button class="ghost" id="downloadSegmentsBtn" disabled>Télécharger</button>
+            </div>
           </div>
           <div class="segments-list" id="segmentsList">
-            <div class="segments-empty">Aucun segment généré.</div>
+            <div class="segments-empty">Aucun segment.</div>
           </div>
         </div>
       </section>
 
       <section class="panel output">
         <div class="panel-header">
-          <h2>Transcription</h2>
-          <p>Le texte complet s'affiche ici.</p>
+          <h2>
+            <span class="section-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 6h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                <path d="M5 12h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                <path d="M5 18h9" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+              </svg>
+            </span>
+            <span>Transcription</span>
+          </h2>
         </div>
         <textarea id="transcript" placeholder="La transcription apparaîtra ici..." readonly></textarea>
         <div class="row end">
@@ -230,28 +313,25 @@
 
       <section class="panel history" id="historyPanel">
         <div class="panel-header">
-          <h2>Historique</h2>
-          <p>Retrouvez, renommez ou supprimez vos transcriptions locales.</p>
+          <h2>
+            <span class="section-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.6" />
+                <path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+              </svg>
+            </span>
+            <span>Historique</span>
+          </h2>
         </div>
         <label class="toggle">
           <input type="checkbox" id="historyEnabled" />
-          <span>Activer l'historique sur cet appareil</span>
+          <span>Historique local</span>
         </label>
         <div class="history-list" id="historyList">
           <div class="history-empty" id="historyEmpty">Historique désactivé.</div>
         </div>
       </section>
     </main>
-
-    <footer class="footer">
-      <div>
-        <span>Vos fichiers ne sont pas stockés.</span>
-        <span>Tout passe directement vers l'API Mistral.</span>
-      </div>
-      <div>
-        <span>Astuce : partagez ce site via GitHub Pages.</span>
-      </div>
-    </footer>
 
     <script src="vendor/ffmpeg/ffmpeg.js"></script>
     <script src="app.js"></script>

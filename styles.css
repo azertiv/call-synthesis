@@ -147,6 +147,13 @@ audio {
   flex-wrap: wrap;
 }
 
+.hero-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  position: relative;
+}
+
 .brand {
   display: flex;
   align-items: center;
@@ -174,6 +181,75 @@ audio {
   background: var(--panel);
   box-shadow: var(--shadow);
   backdrop-filter: blur(12px);
+}
+
+.settings {
+  position: relative;
+}
+
+.settings-toggle {
+  list-style: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  padding: 0;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+  transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.settings-toggle:hover {
+  color: var(--ink);
+}
+
+.settings-toggle:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 2px;
+}
+
+.settings[open] .settings-toggle {
+  background: linear-gradient(135deg, var(--accent), #ffb347);
+  color: #fff;
+  border-color: transparent;
+}
+
+.settings-toggle::-webkit-details-marker {
+  display: none;
+}
+
+.settings-toggle::marker {
+  display: none;
+}
+
+.settings-card {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 12px);
+  width: min(360px, 80vw);
+  max-height: min(70vh, 520px);
+  padding: 18px;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: var(--panel-strong);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(14px);
+  display: grid;
+  gap: 14px;
+  overflow: auto;
+  z-index: 5;
+}
+
+.settings-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  font-size: 1rem;
 }
 
 .theme-btn {
@@ -209,7 +285,7 @@ audio {
   font-weight: 700;
   font-size: clamp(2.2rem, 3vw + 1.6rem, 3.6rem);
   line-height: 1.05;
-  margin: 0 0 12px;
+  margin: 0;
 }
 
 .hero-text p {
@@ -260,6 +336,25 @@ audio {
 .panel-header h2 {
   margin: 0;
   font-size: 1.4rem;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.section-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  background: var(--panel-soft);
+  color: var(--accent);
+}
+
+.section-icon svg {
+  width: 16px;
+  height: 16px;
 }
 
 .panel-header p {
@@ -473,6 +568,19 @@ button:focus-visible {
   color: var(--ink);
 }
 
+.ghost.icon {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+}
+
+.ghost.icon svg {
+  width: 16px;
+  height: 16px;
+}
+
 .ghost.small {
   padding: 6px 12px;
   font-size: 0.82rem;
@@ -548,7 +656,45 @@ button:disabled {
   justify-content: space-between;
   gap: 12px;
   font-size: 0.95rem;
+}
+
+.segments-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-weight: 600;
+}
+
+.segments-count {
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.segments-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.segments.is-collapsed .segments-list {
+  display: none;
+}
+
+.segments-toggle .icon-hide {
+  display: none;
+}
+
+.segments:not(.is-collapsed) .segments-toggle .icon-show {
+  display: none;
+}
+
+.segments:not(.is-collapsed) .segments-toggle .icon-hide {
+  display: block;
 }
 
 .segments-list {
@@ -683,6 +829,12 @@ button:disabled {
     padding: 32px 20px 12px;
   }
 
+  .settings-card {
+    left: 0;
+    right: auto;
+    width: min(100%, 360px);
+  }
+
   .layout {
     padding: 0 20px 48px;
   }
@@ -730,6 +882,10 @@ button:disabled {
   .segments-header {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .segments-actions {
+    width: 100%;
   }
 
   .dropzone {
