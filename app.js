@@ -36,6 +36,7 @@ const elements = {
   rememberKey: document.getElementById("rememberKey"),
   clearKey: document.getElementById("clearKey"),
   language: document.getElementById("language"),
+  streamingToggle: document.getElementById("streamingToggle"),
   dropzone: document.getElementById("dropzone"),
   globalDrop: document.getElementById("globalDrop"),
   fileInput: document.getElementById("fileInput"),
@@ -250,6 +251,30 @@ function mergeTranscriptParts(parts) {
     previousRaw = raw;
   }
   return merged;
+}
+
+function buildLiveTranscript(parts) {
+  return parts
+    .map((part) => (part || "").trim())
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function createLiveTranscriptUpdater(parts) {
+  let scheduled = false;
+  const render = () => {
+    scheduled = false;
+    elements.transcript.value = buildLiveTranscript(parts);
+  };
+  return (force = false) => {
+    if (force) {
+      render();
+      return;
+    }
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(render);
+  };
 }
 
 function setStatus(message, isIdle = false) {
@@ -972,6 +997,111 @@ function extractApiErrorMessage(errorText) {
   return "";
 }
 
+function parseSseEvent(rawEvent, onEvent) {
+  if (!rawEvent) return;
+  const lines = rawEvent.split(/\r?\n/);
+  let eventName = "";
+  const dataLines = [];
+  for (const line of lines) {
+    if (!line || line.startsWith(":")) continue;
+    if (line.startsWith("event:")) {
+      eventName = line.slice(6).trim();
+      continue;
+    }
+    if (line.startsWith("data:")) {
+      let value = line.slice(5);
+      if (value.startsWith(" ")) {
+        value = value.slice(1);
+      }
+      dataLines.push(value);
+    }
+  }
+  if (!dataLines.length) return;
+  const dataString = dataLines.join("\n");
+  let data;
+  try {
+    data = JSON.parse(dataString);
+  } catch (error) {
+    data = dataString;
+  }
+  onEvent({ event: eventName, data });
+}
+
+async function readSseStream(response, { signal, onEvent }) {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error("Streaming SSE non supporté par le navigateur.");
+  }
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    if (signal?.aborted) {
+      await reader.cancel();
+      throw createAbortError();
+    }
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split(/\r?\n\r?\n/);
+    buffer = events.pop() || "";
+    for (const rawEvent of events) {
+      parseSseEvent(rawEvent, onEvent);
+    }
+  }
+  if (buffer.trim()) {
+    parseSseEvent(buffer, onEvent);
+  }
+}
+
+async function readTranscriptionStream(response, { signal, onPartial }) {
+  let partialText = "";
+  let finalPayload = null;
+  let hasTextDelta = false;
+  const segmentTexts = [];
+
+  await readSseStream(response, {
+    signal,
+    onEvent: ({ event, data }) => {
+      if (!data || typeof data !== "object") return;
+      const type = data.type || event;
+      if (type === "transcription.text.delta") {
+        if (typeof data.text === "string") {
+          hasTextDelta = true;
+          partialText += data.text;
+          if (onPartial) {
+            onPartial(partialText);
+          }
+        }
+        return;
+      }
+      if (type === "transcription.segment" && !hasTextDelta) {
+        if (typeof data.text === "string") {
+          segmentTexts.push(data.text);
+          partialText = segmentTexts.join(" ");
+          if (onPartial) {
+            onPartial(partialText);
+          }
+        }
+        return;
+      }
+      if (type === "transcription.done") {
+        finalPayload = data;
+        if (typeof data.text === "string") {
+          partialText = data.text;
+          if (onPartial) {
+            onPartial(partialText);
+          }
+        }
+      }
+    },
+  });
+
+  if (!finalPayload) {
+    finalPayload = { text: partialText };
+  }
+  return finalPayload;
+}
+
 function extensionFromMimeType(mimeType) {
   const base = (mimeType || "audio/webm").split(";")[0];
   if (base.endsWith("webm")) return "webm";
@@ -1281,6 +1411,8 @@ function cancelTranscription() {
 async function transcribeChunk({
   apiKey,
   language,
+  stream,
+  onPartial,
   chunk,
   chunkIndex,
   totalChunks,
@@ -1298,14 +1430,21 @@ async function transcribeChunk({
   if (language) {
     formData.append("language", language);
   }
+  if (stream) {
+    formData.append("stream", "true");
+  }
 
   let response;
   try {
+    const headers = {
+      Authorization: `Bearer ${apiKey}`,
+    };
+    if (stream) {
+      headers.Accept = "text/event-stream";
+    }
     response = await fetch(PROVIDER_CONFIG.endpoint, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-      },
+      headers,
       body: formData,
       signal,
     });
@@ -1323,12 +1462,26 @@ async function transcribeChunk({
     throw new Error(message.trim());
   }
 
-  return response.json();
+  if (!stream) {
+    return response.json();
+  }
+
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("text/event-stream") || !response.body) {
+    const data = await response.json();
+    if (onPartial && typeof data.text === "string") {
+      onPartial(data.text);
+    }
+    return data;
+  }
+
+  return readTranscriptionStream(response, { signal, onPartial });
 }
 
 async function transcribe() {
   const apiKey = elements.apiKey.value.trim();
   const language = elements.language.value.trim();
+  const streamingEnabled = Boolean(elements.streamingToggle?.checked);
   const file = state.file;
 
   if (!apiKey) {
@@ -1373,6 +1526,9 @@ async function transcribe() {
       throw new Error("Aucun segment a transcrire.");
     }
     const transcriptParts = new Array(totalChunks).fill("");
+    const updateLiveTranscript = streamingEnabled
+      ? createLiveTranscriptUpdater(transcriptParts)
+      : null;
     setProgressStatus(`Transcription : 0/${totalChunks} segment(s) termines.`);
     setProgressBar({ label: "Transcription en cours", current: 0, total: totalChunks });
 
@@ -1398,6 +1554,14 @@ async function transcribe() {
           transcribeChunk({
             apiKey,
             language,
+            stream: streamingEnabled,
+            onPartial: updateLiveTranscript
+              ? (text) => {
+                  if (transcriptParts[chunkIndex] === text) return;
+                  transcriptParts[chunkIndex] = text;
+                  updateLiveTranscript();
+                }
+              : null,
             chunk,
             chunkIndex,
             totalChunks,
@@ -1407,12 +1571,16 @@ async function transcribe() {
           })
             .then((data) => {
               if (finished) return;
-              const rawText = typeof data.text === "string" ? data.text : "";
+              const rawText =
+                typeof data.text === "string" ? data.text : transcriptParts[chunkIndex] || "";
               const segmentsText = buildTranscriptFromSegments(data.segments);
               const chunkText = (
                 segmentsText.length > rawText.length ? segmentsText : rawText
               ).trim();
               transcriptParts[chunkIndex] = chunkText;
+              if (updateLiveTranscript) {
+                updateLiveTranscript(true);
+              }
               applyUsage(data.usage);
               completed += 1;
               setProgressStatus(

@@ -155,7 +155,15 @@
               </div>
               <label class="field">
                 <span>Langue (optionnel)</span>
-                <input type="text" id="language" placeholder="fr, en, es..." />
+                <select id="language">
+                  <option value="">Automatique</option>
+                  <option value="fr">Français</option>
+                  <option value="en">Anglais</option>
+                </select>
+              </label>
+              <label class="toggle">
+                <input type="checkbox" id="streamingToggle" />
+                <span>Streaming SSE (affichage en direct)</span>
               </label>
             </div>
           </details>
