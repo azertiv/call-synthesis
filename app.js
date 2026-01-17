@@ -41,7 +41,6 @@ const elements = {
   fileInput: document.getElementById("fileInput"),
   fileMeta: document.getElementById("fileMeta"),
   audioPreview: document.getElementById("audioPreview"),
-  ffmpegToggle: document.getElementById("ffmpegToggle"),
   transcribeBtn: document.getElementById("transcribeBtn"),
   cancelBtn: document.getElementById("cancelBtn"),
   statusLog: document.getElementById("statusLog"),
@@ -89,7 +88,6 @@ const state = {
   segments: [],
   segmentUrls: [],
   prepared: null,
-  ffmpegEnabled: true,
   segmentsVisible: false,
   history: [],
   historyEnabled: true,
@@ -322,25 +320,6 @@ function setProcessing(isProcessing) {
   elements.transcribeBtn.disabled = isProcessing || !hasFile;
   if (elements.cancelBtn) {
     elements.cancelBtn.disabled = !isProcessing;
-  }
-}
-
-function setFfmpegEnabled(enabled, options = {}) {
-  const { silent = false } = options;
-  state.ffmpegEnabled = Boolean(enabled);
-  if (elements.ffmpegToggle) {
-    elements.ffmpegToggle.checked = state.ffmpegEnabled;
-  }
-  state.prepared = null;
-  if (!silent && state.file) {
-    setStatus(
-      state.ffmpegEnabled
-        ? "Découpage FFmpeg activé."
-        : "Découpage FFmpeg désactivé : envoi du fichier complet.",
-    );
-  }
-  if (state.file && !state.processing) {
-    void analyzeFile(state.file);
   }
 }
 
@@ -1239,7 +1218,7 @@ async function ffmpegSegmentByDuration(file, durationSeconds, options = {}) {
 }
 
 async function prepareFile(file, options = {}) {
-  const { signal, useFfmpeg = true } = options;
+  const { signal } = options;
   throwIfAborted(signal);
   const duration = await getAudioDuration(file);
   if (!Number.isFinite(duration) || duration <= 0) {
@@ -1247,14 +1226,8 @@ async function prepareFile(file, options = {}) {
   }
   throwIfAborted(signal);
 
-  if (!useFfmpeg || duration <= SEGMENT_TARGET_SECONDS) {
-    if (duration <= SEGMENT_TARGET_SECONDS) {
-      setStatus("Fichier accepté sans découpage.");
-    } else if (!useFfmpeg) {
-      setStatus(
-        `FFmpeg désactivé : envoi du fichier complet malgré ${formatDuration(duration)}.`,
-      );
-    }
+  if (duration <= SEGMENT_TARGET_SECONDS) {
+    setStatus("Fichier accepté sans découpage.");
     return {
       chunks: [{ blob: file, index: 1, isOriginal: true, durationSeconds: duration }],
       totalSize: file.size,
@@ -1276,12 +1249,9 @@ async function analyzeFile(file) {
   state.abortController = controller;
 
   try {
-    const prepared = await prepareFile(file, {
-      signal: controller.signal,
-      useFfmpeg: state.ffmpegEnabled,
-    });
+    const prepared = await prepareFile(file, { signal: controller.signal });
     if (state.file !== file) return;
-    state.prepared = { ...prepared, file, ffmpegEnabled: state.ffmpegEnabled };
+    state.prepared = { ...prepared, file };
     setSegments(prepared.chunks, file);
     if (!prepared.usedOriginal) {
       setStatus(`Taille finale : ${formatBytes(prepared.totalSize)}.`);
@@ -1385,15 +1355,10 @@ async function transcribe() {
     state.abortController = controller;
     const { signal } = controller;
 
-    const cached =
-      state.prepared &&
-      state.prepared.file === file &&
-      state.prepared.ffmpegEnabled === state.ffmpegEnabled;
-    const prepared = cached
-      ? state.prepared
-      : await prepareFile(file, { signal, useFfmpeg: state.ffmpegEnabled });
+    const cached = state.prepared && state.prepared.file === file;
+    const prepared = cached ? state.prepared : await prepareFile(file, { signal });
     if (!cached) {
-      state.prepared = { ...prepared, file, ffmpegEnabled: state.ffmpegEnabled };
+      state.prepared = { ...prepared, file };
     }
     const { chunks, totalSize, usedOriginal } = prepared;
     if (!state.segments.length) {
@@ -1533,13 +1498,6 @@ elements.fileInput.addEventListener("change", (event) => {
   const file = event.target.files?.[0] || null;
   setFile(file);
 });
-
-if (elements.ffmpegToggle) {
-  elements.ffmpegToggle.addEventListener("change", (event) => {
-    setFfmpegEnabled(event.target.checked);
-  });
-  setFfmpegEnabled(elements.ffmpegToggle.checked, { silent: true });
-}
 
 elements.audioPreview.addEventListener("loadedmetadata", () => {
   const duration = elements.audioPreview.duration;
