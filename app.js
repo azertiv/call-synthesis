@@ -4,7 +4,7 @@ const PROVIDER_CONFIG = {
   endpoint: "https://api.mistral.ai/v1/audio/transcriptions",
 };
 const MAX_PARALLEL_REQUESTS = 3;
-const FORCE_SEQUENTIAL_TRANSCRIPTION = true;
+const USE_STREAMING_TRANSCRIPTION = true;
 const MAX_TRANSCRIBE_ATTEMPTS = 3;
 const RETRY_BACKOFF_BASE_MS = 700;
 const RETRY_BACKOFF_MAX_MS = 8000;
@@ -23,14 +23,6 @@ const HISTORY_LIMIT = 30;
 const HISTORY_PREVIEW_CHARS = 160;
 const OVERLAP_MIN_WORDS = 6;
 const OVERLAP_MAX_WORDS = 80;
-const SEGMENT_DIAGNOSTICS_ENABLED = true;
-const SEGMENT_DIAGNOSTIC_PREVIEW_CHARS = 80;
-const SEGMENT_EMPTY_TEXT_MIN_SECONDS = 45;
-const SEGMENT_EMPTY_TEXT_MIN_BYTES = 30000;
-const SEGMENT_COVERAGE_TOLERANCE_SECONDS = 2;
-const SEGMENT_SHORT_TEXT_MIN_SECONDS = 120;
-const SEGMENT_SHORT_TEXT_CHARS_PER_SECOND = 0.5;
-const SEGMENT_SHORT_TEXT_MIN_CHARS = 80;
 
 const ICONS = {
   open:
@@ -77,8 +69,7 @@ const elements = {
   downloadSegmentsBtn: document.getElementById("downloadSegmentsBtn"),
   themeButtons: document.querySelectorAll("[data-theme-choice]"),
   historyToggle: document.getElementById("historyToggle"),
-  historyDrawer: document.getElementById("historyDrawer"),
-  historyBackdrop: document.getElementById("historyBackdrop"),
+  historyPanel: document.getElementById("historyPanel"),
   historyCloseBtn: document.getElementById("historyCloseBtn"),
   historyEnabled: document.getElementById("historyEnabled"),
   historySearch: document.getElementById("historySearch"),
@@ -135,204 +126,6 @@ function formatDuration(seconds) {
   const hours = Math.floor(minutesTotal / 60);
   const minutes = minutesTotal % 60;
   return `${hours} h ${minutes} min`;
-}
-
-function formatTimestamp(seconds) {
-  if (!Number.isFinite(seconds)) return "—";
-  const rounded = Math.max(0, Math.round(seconds));
-  const hours = Math.floor(rounded / 3600);
-  const minutes = Math.floor((rounded % 3600) / 60);
-  const secs = rounded % 60;
-  if (hours) {
-    return `${hours}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
-  }
-  return `${minutes}:${String(secs).padStart(2, "0")}`;
-}
-
-function getSegmentDurationSeconds(chunk) {
-  const start = Number(chunk?.startSeconds);
-  const end = Number(chunk?.endSeconds);
-  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
-  return Math.max(0, end - start);
-}
-
-function sortSegments(chunks) {
-  return [...chunks].sort((a, b) => {
-    const aStart = Number.isFinite(a?.startSeconds) ? a.startSeconds : 0;
-    const bStart = Number.isFinite(b?.startSeconds) ? b.startSeconds : 0;
-    if (aStart !== bStart) return aStart - bStart;
-    const aIndex = Number.isFinite(a?.index) ? a.index : 0;
-    const bIndex = Number.isFinite(b?.index) ? b.index : 0;
-    return aIndex - bIndex;
-  });
-}
-
-function normalizeSegments(chunks, durationSeconds) {
-  if (!Array.isArray(chunks)) return [];
-  const normalized = chunks.map((chunk, idx) => {
-    const startSeconds = Number.isFinite(chunk?.startSeconds) ? chunk.startSeconds : 0;
-    const endSeconds = Number.isFinite(chunk?.endSeconds)
-      ? chunk.endSeconds
-      : Number.isFinite(durationSeconds)
-        ? durationSeconds
-        : null;
-    const index = Number.isFinite(chunk?.index) ? chunk.index : idx + 1;
-    return { ...chunk, index, startSeconds, endSeconds };
-  });
-  return sortSegments(normalized);
-}
-
-function logSegmentPlan(chunks, durationSeconds) {
-  if (!SEGMENT_DIAGNOSTICS_ENABLED) return;
-  const durationLabel = Number.isFinite(durationSeconds)
-    ? formatDuration(durationSeconds)
-    : "—";
-  setStatus(`Segments préparés : ${chunks.length} · durée audio ${durationLabel}.`, true);
-  chunks.forEach((chunk, idx) => {
-    const label = Number.isFinite(chunk?.index) ? chunk.index : idx + 1;
-    const start = formatTimestamp(chunk?.startSeconds);
-    const end = formatTimestamp(chunk?.endSeconds);
-    const segmentDuration = getSegmentDurationSeconds(chunk);
-    const durationText = Number.isFinite(segmentDuration)
-      ? formatDuration(segmentDuration)
-      : "—";
-    const bytes = formatBytes(chunk?.blob?.size ?? 0);
-    setStatus(`Segment ${label} : ${start} -> ${end} (${durationText}) · ${bytes}.`, true);
-  });
-  console.info(
-    "Segments préparés",
-    chunks.map((chunk, idx) => ({
-      index: Number.isFinite(chunk?.index) ? chunk.index : idx + 1,
-      startSeconds: chunk?.startSeconds ?? null,
-      endSeconds: chunk?.endSeconds ?? null,
-      bytes: chunk?.blob?.size ?? 0,
-    })),
-  );
-}
-
-function logSegmentResults(chunks, transcriptParts) {
-  if (!SEGMENT_DIAGNOSTICS_ENABLED) return;
-  setStatus("Segments transcrits :", true);
-  chunks.forEach((chunk, idx) => {
-    const label = Number.isFinite(chunk?.index) ? chunk.index : idx + 1;
-    const text = (transcriptParts[idx] || "").trim();
-    const normalized = text.replace(/\s+/g, " ").trim();
-    const preview = normalized.slice(0, SEGMENT_DIAGNOSTIC_PREVIEW_CHARS);
-    const suffix = normalized.length > SEGMENT_DIAGNOSTIC_PREVIEW_CHARS ? "..." : "";
-    setStatus(
-      `Segment ${label} : ${text.length} caract. · "${preview}${suffix}"`,
-      true,
-    );
-  });
-  console.info(
-    "Segments transcrits",
-    chunks.map((chunk, idx) => {
-      const text = (transcriptParts[idx] || "").trim();
-      return {
-        index: Number.isFinite(chunk?.index) ? chunk.index : idx + 1,
-        textLength: text.length,
-        preview: text.replace(/\s+/g, " ").trim().slice(0, SEGMENT_DIAGNOSTIC_PREVIEW_CHARS),
-      };
-    }),
-  );
-}
-
-function checkSegmentCoverage(chunks, durationSeconds) {
-  const errors = [];
-  const warnings = [];
-  if (!Number.isFinite(durationSeconds) || !chunks.length) {
-    return { errors, warnings };
-  }
-  const expected = Math.max(1, Math.ceil(durationSeconds / SEGMENT_TARGET_SECONDS));
-  if (chunks.length !== expected) {
-    errors.push(`Segments attendus : ${expected}, reçus : ${chunks.length}.`);
-  }
-  const indexSet = new Set();
-  const duplicates = [];
-  const missing = [];
-  chunks.forEach((chunk, idx) => {
-    const label = Number.isFinite(chunk?.index) ? chunk.index : idx + 1;
-    if (indexSet.has(label)) {
-      duplicates.push(label);
-    }
-    indexSet.add(label);
-  });
-  for (let i = 1; i <= expected; i += 1) {
-    if (!indexSet.has(i)) {
-      missing.push(i);
-    }
-  }
-  if (missing.length) {
-    errors.push(`Segments manquants : ${missing.join(", ")}.`);
-  }
-  if (duplicates.length) {
-    errors.push(`Segments dupliqués : ${duplicates.join(", ")}.`);
-  }
-  const starts = chunks
-    .map((chunk) => chunk?.startSeconds)
-    .filter((value) => Number.isFinite(value));
-  const ends = chunks
-    .map((chunk) => chunk?.endSeconds)
-    .filter((value) => Number.isFinite(value));
-  if (starts.length && ends.length) {
-    const minStart = Math.min(...starts);
-    const maxEnd = Math.max(...ends);
-    if (minStart > SEGMENT_COVERAGE_TOLERANCE_SECONDS) {
-      warnings.push(
-        `Couverture segments démarre à ${formatTimestamp(minStart)}.`,
-      );
-    }
-    if (maxEnd < durationSeconds - SEGMENT_COVERAGE_TOLERANCE_SECONDS) {
-      warnings.push(
-        `Couverture segments s'arrête à ${formatTimestamp(maxEnd)}.`,
-      );
-    }
-  }
-  return { errors, warnings };
-}
-
-function isSuspiciousEmptyTranscript(chunk, text) {
-  const trimmed = (text || "").trim();
-  if (trimmed) return false;
-  const duration = getSegmentDurationSeconds(chunk);
-  const size = Number(chunk?.blob?.size ?? 0);
-  if (Number.isFinite(duration) && duration < SEGMENT_EMPTY_TEXT_MIN_SECONDS) {
-    return false;
-  }
-  if (Number.isFinite(size) && size < SEGMENT_EMPTY_TEXT_MIN_BYTES) {
-    return false;
-  }
-  return true;
-}
-
-function isSuspiciouslyShortTranscript(chunk, text) {
-  const trimmed = (text || "").trim();
-  if (!trimmed) return false;
-  const duration = getSegmentDurationSeconds(chunk);
-  if (!Number.isFinite(duration) || duration < SEGMENT_SHORT_TEXT_MIN_SECONDS) {
-    return false;
-  }
-  const minChars = Math.max(
-    SEGMENT_SHORT_TEXT_MIN_CHARS,
-    Math.round(duration * SEGMENT_SHORT_TEXT_CHARS_PER_SECOND),
-  );
-  return trimmed.length < minChars;
-}
-
-function findTranscriptIssues(chunks, transcriptParts) {
-  const missing = [];
-  const empty = [];
-  chunks.forEach((chunk, idx) => {
-    const label = Number.isFinite(chunk?.index) ? chunk.index : idx + 1;
-    if (typeof transcriptParts[idx] !== "string") {
-      missing.push(label);
-      return;
-    }
-    if (isSuspiciousEmptyTranscript(chunk, transcriptParts[idx])) {
-      empty.push(label);
-    }
-  });
-  return { missing, empty };
 }
 
 function formatHistoryDate(timestamp) {
@@ -424,6 +217,122 @@ function getRetryDelayMs(attempt, response) {
   const retryAfter = response ? parseRetryAfterMs(response) : null;
   const delay = retryAfter != null ? Math.max(retryAfter, jitter) : jitter;
   return Math.round(delay);
+}
+
+function isEventStreamResponse(response) {
+  const contentType = response.headers.get("content-type") || "";
+  return contentType.toLowerCase().includes("text/event-stream");
+}
+
+function buildTranscriptFromSegments(segments) {
+  if (!Array.isArray(segments) || !segments.length) return "";
+  return segments
+    .map((segment) => (segment?.text || "").trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function readTranscriptionStream(response, signal) {
+  if (!response.body) {
+    throw new Error("Flux de transcription indisponible.");
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+  let currentEvent = "";
+  let dataLines = [];
+  const textParts = [];
+  const segments = [];
+  let donePayload = null;
+
+  const flushEvent = () => {
+    const raw = dataLines.join("\n").trim();
+    dataLines = [];
+    const eventName = currentEvent.trim();
+    currentEvent = "";
+    if (!raw) return;
+    if (raw === "[DONE]") return;
+
+    let payload;
+    try {
+      payload = JSON.parse(raw);
+    } catch (error) {
+      return;
+    }
+
+    let eventType = eventName;
+    let data = payload;
+    if (payload && typeof payload === "object") {
+      if (payload.event && payload.data) {
+        eventType = payload.event;
+        data = payload.data;
+      } else if (!eventType && payload.type) {
+        eventType = payload.type;
+      }
+    }
+
+    if (eventType === "transcription.text.delta") {
+      if (typeof data?.text === "string") {
+        textParts.push(data.text);
+      }
+      return;
+    }
+    if (eventType === "transcription.segment") {
+      if (data && typeof data === "object") {
+        segments.push(data);
+      }
+      return;
+    }
+    if (eventType === "transcription.done") {
+      donePayload = data;
+    }
+  };
+
+  try {
+    while (true) {
+      throwIfAborted(signal);
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        if (line.startsWith("event:")) {
+          currentEvent = line.slice("event:".length).trim();
+          continue;
+        }
+        if (line.startsWith("data:")) {
+          dataLines.push(line.slice("data:".length).trim());
+          continue;
+        }
+        if (!line.trim()) {
+          flushEvent();
+        }
+      }
+    }
+    if (buffer.trim()) {
+      dataLines.push(buffer.trim());
+    }
+    flushEvent();
+  } finally {
+    reader.releaseLock();
+  }
+
+  if (donePayload && typeof donePayload === "object") {
+    if (!donePayload.segments?.length && segments.length) {
+      donePayload.segments = segments;
+    }
+    if (!donePayload.text) {
+      donePayload.text = buildTranscriptFromSegments(donePayload.segments) || textParts.join("");
+    }
+    return donePayload;
+  }
+
+  const fallbackText = textParts.join("");
+  if (!fallbackText) {
+    throw new Error("Flux de transcription incomplet.");
+  }
+  return { text: fallbackText, segments };
 }
 
 function normalizeForMatch(value) {
@@ -706,10 +615,30 @@ function loadHistoryEntries() {
 
 function saveHistoryEntries() {
   try {
-    localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(state.history));
+    const payload = serializeHistoryEntries(state.history);
+    localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(payload));
   } catch (error) {
     setStatus("Impossible de sauvegarder l'historique (stockage local plein ?).");
   }
+}
+
+function serializeHistoryEntries(entries) {
+  if (!Array.isArray(entries)) return [];
+  return entries.map((entry) => ({
+    id: entry.id,
+    title: entry.title,
+    createdAt: Number.isFinite(entry.createdAt) ? entry.createdAt : Date.now(),
+    text: typeof entry.text === "string" ? entry.text : "",
+    fileName: typeof entry.fileName === "string" ? entry.fileName : "",
+    durationSeconds: Number.isFinite(entry.durationSeconds) ? entry.durationSeconds : null,
+    usageSeen: Boolean(entry.usageSeen),
+    tokens: {
+      input: Number(entry.tokens?.input) || 0,
+      output: Number(entry.tokens?.output) || 0,
+      total: Number(entry.tokens?.total) || 0,
+      estimate: Number(entry.tokens?.estimate) || 0,
+    },
+  }));
 }
 
 function updateHistoryToggleLabel(isOpen) {
@@ -723,13 +652,10 @@ function updateHistoryToggleLabel(isOpen) {
   }
 }
 
-function setHistoryDrawerOpen(isOpen) {
-  if (!elements.historyDrawer) return;
-  document.body.classList.toggle("history-open", isOpen);
-  elements.historyDrawer.setAttribute("aria-hidden", isOpen ? "false" : "true");
-  if (elements.historyBackdrop) {
-    elements.historyBackdrop.setAttribute("aria-hidden", isOpen ? "false" : "true");
-  }
+function setHistoryPanelOpen(isOpen) {
+  if (!elements.historyPanel) return;
+  document.body.classList.toggle("history-collapsed", !isOpen);
+  elements.historyPanel.setAttribute("aria-hidden", isOpen ? "false" : "true");
   if (elements.historyToggle) {
     elements.historyToggle.setAttribute("aria-expanded", isOpen ? "true" : "false");
   }
@@ -1077,7 +1003,7 @@ function exportHistoryEntries() {
   if (!state.history.length) return;
   const payload = {
     exportedAt: new Date().toISOString(),
-    entries: state.history,
+    entries: serializeHistoryEntries(state.history),
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], {
     type: "application/json;charset=utf-8",
@@ -1471,21 +1397,14 @@ async function prepareFile(file, options = {}) {
 
   if (duration <= SEGMENT_TARGET_SECONDS) {
     setStatus("Fichier accepté sans découpage.");
-    const chunks = normalizeSegments(
-      [{ blob: file, index: 1, isOriginal: true, startSeconds: 0, endSeconds: duration }],
-      duration,
-    );
     return {
-      chunks,
+      chunks: [{ blob: file, index: 1, isOriginal: true }],
       totalSize: file.size,
       usedOriginal: true,
-      durationSeconds: duration,
     };
   }
 
-  const segmented = await ffmpegSegmentByDuration(file, duration, { signal });
-  const chunks = normalizeSegments(segmented.chunks, duration);
-  return { ...segmented, chunks, durationSeconds: duration };
+  return ffmpegSegmentByDuration(file, duration, { signal });
 }
 
 async function analyzeFile(file) {
@@ -1539,6 +1458,7 @@ async function transcribeChunkWithRetry({
   signal,
 }) {
   const filename = buildSegmentFilename(baseName, file, chunk);
+  const wantsStream = USE_STREAMING_TRANSCRIPTION;
   for (let attempt = 1; attempt <= MAX_TRANSCRIBE_ATTEMPTS; attempt += 1) {
     throwIfAborted(signal);
     const attemptLabel =
@@ -1551,14 +1471,21 @@ async function transcribeChunkWithRetry({
     if (language) {
       formData.append("language", language);
     }
+    if (wantsStream) {
+      formData.append("stream", "true");
+    }
 
     let response;
     try {
+      const headers = {
+        Authorization: `Bearer ${apiKey}`,
+      };
+      if (wantsStream) {
+        headers.Accept = "text/event-stream";
+      }
       response = await fetch(PROVIDER_CONFIG.endpoint, {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-        },
+        headers,
         body: formData,
         signal,
       });
@@ -1594,38 +1521,10 @@ async function transcribeChunkWithRetry({
       throw new Error(message.trim());
     }
 
-    const data = await response.json();
-    const text = (data.text || "").trim();
-    if (isSuspiciousEmptyTranscript(chunk, text)) {
-      if (attempt < MAX_TRANSCRIBE_ATTEMPTS) {
-        const delayMs = getRetryDelayMs(attempt);
-        const delaySeconds = Math.round(delayMs / 100) / 10;
-        setStatus(
-          `Segment ${chunkIndex + 1}/${totalChunks} : transcription vide, nouvelle tentative dans ${delaySeconds}s.`,
-        );
-        await sleep(delayMs, signal);
-        continue;
-      }
-      throw new Error(
-        `Segment ${chunkIndex + 1}/${totalChunks} : transcription vide apres ${MAX_TRANSCRIBE_ATTEMPTS} tentative(s).`,
-      );
+    if (wantsStream && isEventStreamResponse(response)) {
+      return readTranscriptionStream(response, signal);
     }
-    if (isSuspiciouslyShortTranscript(chunk, text)) {
-      if (attempt < MAX_TRANSCRIBE_ATTEMPTS) {
-        const delayMs = getRetryDelayMs(attempt);
-        const delaySeconds = Math.round(delayMs / 100) / 10;
-        setStatus(
-          `Segment ${chunkIndex + 1}/${totalChunks} : texte trop court, nouvelle tentative dans ${delaySeconds}s.`,
-        );
-        await sleep(delayMs, signal);
-        continue;
-      }
-      throw new Error(
-        `Segment ${chunkIndex + 1}/${totalChunks} : texte trop court (${text.length} caract.).`,
-      );
-    }
-
-    return data;
+    return response.json();
   }
   throw new Error("Echec transcription segment.");
 }
@@ -1664,12 +1563,7 @@ async function transcribe() {
     if (!cached) {
       state.prepared = { ...prepared, file };
     }
-    const durationSeconds = Number.isFinite(prepared.durationSeconds)
-      ? prepared.durationSeconds
-      : state.durationSeconds;
-    let { chunks, totalSize, usedOriginal } = prepared;
-    chunks = normalizeSegments(chunks, durationSeconds);
-    prepared.chunks = chunks;
+    const { chunks, totalSize, usedOriginal } = prepared;
     if (!state.segments.length) {
       setSegments(chunks, file);
     }
@@ -1681,24 +1575,11 @@ async function transcribe() {
     if (!totalChunks) {
       throw new Error("Aucun segment a transcrire.");
     }
-    logSegmentPlan(chunks, durationSeconds);
-    const coverageCheck = checkSegmentCoverage(chunks, durationSeconds);
-    coverageCheck.warnings.forEach((warning) => {
-      setStatus(warning, true);
-    });
-    if (coverageCheck.errors.length) {
-      throw new Error(coverageCheck.errors.join(" "));
-    }
     const transcriptParts = new Array(totalChunks).fill("");
     setProgressStatus(`Transcription : 0/${totalChunks} segment(s) termines.`);
     setProgressBar({ label: "Transcription en cours", current: 0, total: totalChunks });
 
-    const parallelLimit = FORCE_SEQUENTIAL_TRANSCRIPTION
-      ? 1
-      : Math.max(1, Math.min(MAX_PARALLEL_REQUESTS, totalChunks));
-    if (FORCE_SEQUENTIAL_TRANSCRIPTION && totalChunks > 1) {
-      setStatus("Mode sequentiel actif : transcription segment par segment.", true);
-    }
+    const parallelLimit = Math.max(1, Math.min(MAX_PARALLEL_REQUESTS, totalChunks));
     let completed = 0;
     let active = 0;
     let nextIndex = 0;
@@ -1767,19 +1648,6 @@ async function transcribe() {
       };
       launchNext();
     });
-
-    logSegmentResults(chunks, transcriptParts);
-    const transcriptIssues = findTranscriptIssues(chunks, transcriptParts);
-    if (transcriptIssues.missing.length || transcriptIssues.empty.length) {
-      const details = [];
-      if (transcriptIssues.missing.length) {
-        details.push(`manquants: ${transcriptIssues.missing.join(", ")}`);
-      }
-      if (transcriptIssues.empty.length) {
-        details.push(`sans texte: ${transcriptIssues.empty.join(", ")}`);
-      }
-      throw new Error(`Transcription incomplète (${details.join("; ")}).`);
-    }
 
     const fullTranscript = mergeTranscriptParts(transcriptParts);
     const transcriptValue = fullTranscript || "(Aucun texte retourne)";
@@ -2018,27 +1886,21 @@ if (elements.themeButtons?.length) {
 
 if (elements.historyToggle) {
   elements.historyToggle.addEventListener("click", () => {
-    const isOpen = document.body.classList.contains("history-open");
-    setHistoryDrawerOpen(!isOpen);
-  });
-}
-
-if (elements.historyBackdrop) {
-  elements.historyBackdrop.addEventListener("click", () => {
-    setHistoryDrawerOpen(false);
+    const isOpen = !document.body.classList.contains("history-collapsed");
+    setHistoryPanelOpen(!isOpen);
   });
 }
 
 if (elements.historyCloseBtn) {
   elements.historyCloseBtn.addEventListener("click", () => {
-    setHistoryDrawerOpen(false);
+    setHistoryPanelOpen(false);
   });
 }
 
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
-  if (document.body.classList.contains("history-open")) {
-    setHistoryDrawerOpen(false);
+  if (!document.body.classList.contains("history-collapsed")) {
+    setHistoryPanelOpen(false);
   }
 });
 
@@ -2108,7 +1970,7 @@ function loadStoredKey() {
 loadStoredKey();
 loadThemeChoice();
 loadHistoryState();
-setHistoryDrawerOpen(false);
+setHistoryPanelOpen(true);
 setSegmentsVisibility(false);
 clearStatus();
 setStatus("Prêt.", true);

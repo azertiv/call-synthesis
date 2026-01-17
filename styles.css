@@ -92,9 +92,6 @@ body {
   transition: background 0.3s ease, color 0.3s ease;
 }
 
-body.history-open {
-  overflow: hidden;
-}
 
 img {
   max-width: 100%;
@@ -351,48 +348,43 @@ audio {
   font-size: 0.95rem;
 }
 
-.layout {
+.workspace {
   max-width: 1200px;
   margin: 0 auto;
   padding: 0 24px 64px;
   display: grid;
+  grid-template-columns: var(--history-panel-width, clamp(240px, 26vw, 320px)) minmax(0, 1fr);
+  row-gap: 24px;
+  column-gap: 24px;
+  align-items: start;
+  transition: grid-template-columns 0.25s ease;
+}
+
+body.history-collapsed .workspace {
+  --history-panel-width: 0px;
+  column-gap: 0;
+}
+
+.layout {
+  display: grid;
   grid-template-columns: repeat(2, minmax(280px, 1fr));
   gap: 24px;
   align-items: start;
-}
-
-.history-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(18, 20, 27, 0.35);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.25s ease;
-  z-index: 18;
-}
-
-.history-drawer {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: min(380px, 92vw);
-  height: 100vh;
-  background: var(--panel-strong);
-  border-right: 1px solid var(--border);
-  box-shadow: var(--shadow);
-  backdrop-filter: blur(16px);
-  transform: translateX(-105%);
-  transition: transform 0.3s ease;
-  z-index: 19;
+  min-width: 0;
 }
 
 .history-panel {
-  height: 100%;
-  padding: 26px 24px;
   display: grid;
   gap: 16px;
-  grid-template-rows: auto auto auto auto 1fr;
+  grid-template-rows: auto auto auto auto minmax(0, 1fr);
   min-height: 0;
+  min-width: 0;
+  align-self: start;
+  position: sticky;
+  top: 24px;
+  max-height: calc(100vh - 140px);
+  overflow: hidden;
+  transition: opacity 0.2s ease, transform 0.2s ease;
 }
 
 .history-header {
@@ -445,13 +437,14 @@ audio {
   margin: 0;
 }
 
-body.history-open .history-backdrop {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-body.history-open .history-drawer {
-  transform: translateX(0);
+body.history-collapsed .history-panel {
+  opacity: 0;
+  transform: translateX(-12px);
+  pointer-events: none;
+  visibility: hidden;
+  padding: 0;
+  border: none;
+  box-shadow: none;
 }
 
 .panel {
@@ -1066,8 +1059,21 @@ button:disabled {
 }
 
 @media (max-width: 980px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
   .layout {
     grid-template-columns: 1fr;
+  }
+
+  .history-panel {
+    position: relative;
+    max-height: none;
+  }
+
+  body.history-collapsed .history-panel {
+    display: none;
   }
 }
 
@@ -1082,15 +1088,11 @@ button:disabled {
     width: min(100%, 360px);
   }
 
-  .layout {
+  .workspace {
     padding: 0 20px 48px;
   }
 
   .panel {
-    padding: 20px;
-  }
-
-  .history-panel {
     padding: 20px;
   }
 

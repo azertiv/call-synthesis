@@ -33,7 +33,7 @@
             id="historyToggle"
             type="button"
             aria-label="Ouvrir l'historique"
-            aria-controls="historyDrawer"
+            aria-controls="historyPanel"
             aria-expanded="false"
             title="Ouvrir l'historique"
           >
@@ -166,9 +166,8 @@
       </div>
     </header>
 
-    <div class="history-backdrop" id="historyBackdrop" aria-hidden="true"></div>
-    <aside class="history-drawer" id="historyDrawer" aria-hidden="true" aria-label="Historique">
-      <div class="history-panel">
+    <main class="workspace">
+      <aside class="panel history-panel" id="historyPanel" aria-hidden="false" aria-label="Historique">
         <div class="history-header">
           <div class="history-heading">
             <span class="section-icon" aria-hidden="true">
@@ -208,11 +207,10 @@
         <div class="history-list" id="historyList">
           <div class="history-empty" id="historyEmpty">Historique désactivé.</div>
         </div>
-      </div>
-    </aside>
+      </aside>
 
-    <main class="layout">
-      <section class="panel upload">
+      <div class="layout">
+        <section class="panel upload">
         <div class="panel-header">
           <h2>
             <span class="section-icon" aria-hidden="true">
@@ -389,7 +387,8 @@
           <button class="ghost" id="copyBtn">Copier</button>
           <button class="ghost" id="downloadBtn">Télécharger</button>
         </div>
-      </section>
+        </section>
+      </div>
     </main>
 
     <script src="vendor/ffmpeg/ffmpeg.js"></script>
