@@ -4,10 +4,10 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
-    <title>Call Synthesis — Transcription iOS + OpenAI</title>
+    <title>Call Synthesis — Transcription iOS + OpenAI &amp; Mistral</title>
     <meta
       name="description"
-      content="Transcrivez vos mémos vocaux iOS avec l'API OpenAI, gérez la taille des fichiers et suivez l'usage des tokens."
+      content="Transcrivez vos mémos vocaux iOS avec l'API OpenAI ou Mistral, gérez la taille des fichiers et suivez l'usage des tokens."
     />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -82,73 +82,11 @@
           </button>
         </div>
       </div>
-      <div class="privacy-schematic">
-        <div class="privacy-caption">
-          <span class="privacy-badge">Confidentialité 100%</span>
-          <div class="privacy-caption-text">
-            <span>Aucun back-end, aucun stockage.</span>
-            <span>Traitement local + appel direct à l'API OpenAI.</span>
-          </div>
-        </div>
-        <div class="privacy-flow">
-          <div class="privacy-node">
-            <div class="privacy-icon">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <rect x="7" y="2.5" width="10" height="19" rx="2" fill="none" stroke="currentColor" stroke-width="1.6" />
-                <circle cx="12" cy="18.5" r="1" fill="currentColor" />
-              </svg>
-            </div>
-            <div class="privacy-title">Votre iPhone</div>
-            <div class="privacy-sub">Fichiers locaux</div>
-          </div>
-          <div class="privacy-connector">
-            <span class="privacy-line"></span>
-            <span class="privacy-tag">Local</span>
-          </div>
-          <div class="privacy-node">
-            <div class="privacy-icon">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.6" />
-                <path d="M3 8.5h18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
-                <circle cx="6.2" cy="6.8" r="0.8" fill="currentColor" />
-                <circle cx="9" cy="6.8" r="0.8" fill="currentColor" />
-              </svg>
-            </div>
-            <div class="privacy-title">Navigateur</div>
-            <div class="privacy-sub">Découpe + tokens</div>
-          </div>
-          <div class="privacy-connector">
-            <span class="privacy-line"></span>
-            <span class="privacy-tag">HTTPS direct</span>
-          </div>
-          <div class="privacy-node">
-            <div class="privacy-icon">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  d="M7 18h9a4 4 0 0 0 0-8 5.2 5.2 0 0 0-10 1.5A3.5 3.5 0 0 0 7 18Z"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="1.6"
-                />
-              </svg>
-            </div>
-            <div class="privacy-title">API OpenAI</div>
-            <div class="privacy-sub">Appel direct</div>
-          </div>
-        </div>
-        <div class="privacy-notes">
-          <span class="privacy-pill">0% back-end</span>
-          <span class="privacy-pill">0% stockage</span>
-          <span class="privacy-pill">100% navigateur</span>
-        </div>
-      </div>
       <div class="hero-text">
         <h1>Votre dictaphone iOS, une transcription claire et instantanée.</h1>
         <p>
-          Importez vos fichiers depuis Fichiers, utilisez votre propre clé OpenAI, et obtenez une
-          transcription complète avec suivi des tokens. Tout reste dans votre navigateur.
+          Importez vos fichiers depuis Fichiers, utilisez votre propre clé OpenAI ou Mistral, et
+          obtenez une transcription complète avec suivi des tokens. Tout reste dans votre navigateur.
         </p>
       </div>
       <div class="hero-meta">
@@ -157,7 +95,7 @@
           <span class="meta-detail">Aucune infra serveur nécessaire</span>
         </div>
         <div>
-          <span class="meta-title">Limite OpenAI</span>
+          <span class="meta-title">Limite fichier</span>
           <span class="meta-detail">25 Mo par fichier, gestion auto</span>
         </div>
       </div>
@@ -170,7 +108,7 @@
           <p>Vos clés ne quittent pas votre navigateur.</p>
         </div>
         <label class="field">
-          <span>Clé API OpenAI</span>
+          <span>Clé API (OpenAI / Mistral)</span>
           <input
             type="password"
             id="apiKey"
@@ -189,9 +127,8 @@
         <label class="field">
           <span>Modèle</span>
           <select id="model">
-            <option value="gpt-4o-mini-transcribe">gpt-4o-mini-transcribe · $0.003/min</option>
-            <option value="gpt-4o-transcribe">gpt-4o-transcribe · $0.006/min</option>
-            <option value="whisper-1">whisper-1 · $0.006/min</option>
+            <option value="gpt-4o-mini-transcribe">gpt-4o-mini-transcribe · OpenAI</option>
+            <option value="voxtral-mini-latest">Voxtral Mini Transcribe · Mistral</option>
           </select>
         </label>
         <div class="hint" id="modelPriceHint"></div>
@@ -294,7 +231,7 @@
     <footer class="footer">
       <div>
         <span>Vos fichiers ne sont pas stockés.</span>
-        <span>Tout passe directement vers l'API OpenAI.</span>
+        <span>Tout passe directement vers les APIs OpenAI ou Mistral.</span>
       </div>
       <div>
         <span>Astuce : partagez ce site via GitHub Pages.</span>

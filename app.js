@@ -9,10 +9,34 @@ const RETRY_BACKOFF_BASE_MS = 700;
 const RETRY_BACKOFF_MAX_MS = 8000;
 const SEGMENT_TIME_MARGIN = 1.03;
 const RETRY_SEGMENT_MINUTES = [15, 10, 8];
-const MAX_SEGMENT_MINUTES_BY_MODEL = {
-  "gpt-4o-mini-transcribe": 20,
-  "gpt-4o-transcribe": 20,
-  "whisper-1": 30,
+const DEFAULT_MAX_SEGMENT_MINUTES = 20;
+const MODEL_CONFIG = {
+  "gpt-4o-mini-transcribe": {
+    provider: "openai",
+    maxMinutes: 20,
+    pricing: {
+      perMinute: 0.003,
+      textInputPer1M: 1.25,
+      textOutputPer1M: 5.0,
+      audioInputPer1M: 3.0,
+    },
+  },
+  "voxtral-mini-latest": {
+    provider: "mistral",
+    maxMinutes: 20,
+    pricing: null,
+  },
+};
+const PROVIDER_CONFIG = {
+  openai: {
+    label: "OpenAI",
+    endpoint: "https://api.openai.com/v1/audio/transcriptions",
+    responseFormat: "json",
+  },
+  mistral: {
+    label: "Mistral",
+    endpoint: "https://api.mistral.ai/v1/audio/transcriptions",
+  },
 };
 const FFMPEG_BASE_PATH = "vendor/ffmpeg/";
 const FFMPEG_CORE_FILE = "ffmpeg-core.js";
@@ -21,23 +45,6 @@ const STORAGE_KEY = "callSynthesis.apiKey";
 const STORAGE_REMEMBER = "callSynthesis.remember";
 const THEME_STORAGE = "callSynthesis.theme";
 const PRICE_PER_MILLION = 1_000_000;
-const MODEL_PRICING = {
-  "gpt-4o-mini-transcribe": {
-    perMinute: 0.003,
-    textInputPer1M: 1.25,
-    textOutputPer1M: 5.0,
-    audioInputPer1M: 3.0,
-  },
-  "gpt-4o-transcribe": {
-    perMinute: 0.006,
-    textInputPer1M: 2.5,
-    textOutputPer1M: 10.0,
-    audioInputPer1M: 6.0,
-  },
-  "whisper-1": {
-    perMinute: 0.006,
-  },
-};
 
 const elements = {
   apiKey: document.getElementById("apiKey"),
@@ -89,6 +96,19 @@ const ffmpegState = {
 };
 
 let progressLine = null;
+
+function getModelConfig(model) {
+  return MODEL_CONFIG[model] || null;
+}
+
+function getProviderConfig(model) {
+  const providerKey = getModelConfig(model)?.provider || "openai";
+  return PROVIDER_CONFIG[providerKey] || PROVIDER_CONFIG.openai;
+}
+
+function getProviderLabel(model) {
+  return getProviderConfig(model).label;
+}
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return "—";
@@ -286,8 +306,12 @@ function formatPerMillion(value) {
 }
 
 function buildModelPriceHint(model) {
-  const pricing = MODEL_PRICING[model];
-  if (!pricing) return "Tarif indisponible pour ce modèle.";
+  const config = getModelConfig(model);
+  const pricing = config?.pricing;
+  if (!pricing) {
+    const provider = config ? PROVIDER_CONFIG[config.provider]?.label : null;
+    return `Tarif indisponible pour ce modèle${provider ? ` (${provider})` : ""}.`;
+  }
   const parts = [];
   if (Number.isFinite(pricing.perMinute)) {
     parts.push(`env. ${formatRate(pricing.perMinute)} / min`);
@@ -312,8 +336,7 @@ function updateModelPriceHint() {
   elements.modelPriceHint.textContent = buildModelPriceHint(model);
 }
 
-function estimatePriceFromUsage(model, usage) {
-  const pricing = MODEL_PRICING[model];
+function estimatePriceFromUsage(pricing, usage) {
   if (!pricing || !usage) return null;
   const inputRate = Number.isFinite(pricing.audioInputPer1M)
     ? pricing.audioInputPer1M
@@ -334,8 +357,7 @@ function estimatePriceFromUsage(model, usage) {
   return used ? total : null;
 }
 
-function estimatePriceFromDuration(model, durationSeconds) {
-  const pricing = MODEL_PRICING[model];
+function estimatePriceFromDuration(pricing, durationSeconds) {
   if (!pricing || !Number.isFinite(pricing.perMinute)) return null;
   if (!Number.isFinite(durationSeconds)) return null;
   return (durationSeconds / 60) * pricing.perMinute;
@@ -344,11 +366,15 @@ function estimatePriceFromDuration(model, durationSeconds) {
 function updatePriceDisplay() {
   if (!elements.priceTotal || !elements.priceHint) return;
   const model = (state.activeModel || elements.model.value || "").trim();
-  const pricing = MODEL_PRICING[model];
+  const config = getModelConfig(model);
+  const pricing = config?.pricing || null;
+  const provider = config ? PROVIDER_CONFIG[config.provider]?.label : null;
 
   if (!pricing) {
     elements.priceTotal.textContent = "—";
-    elements.priceHint.textContent = "Tarif indisponible pour ce modèle.";
+    elements.priceHint.textContent = `Tarif indisponible pour ce modèle${
+      provider ? ` (${provider})` : ""
+    }.`;
     return;
   }
 
@@ -362,7 +388,7 @@ function updatePriceDisplay() {
   let note = "";
 
   if (state.usageSeen) {
-    const usageCost = estimatePriceFromUsage(model, state.usage);
+    const usageCost = estimatePriceFromUsage(pricing, state.usage);
     if (usageCost != null) {
       cost = formatCost(usageCost);
       note = `Prix calculé à partir des tokens (${model}).`;
@@ -370,7 +396,7 @@ function updatePriceDisplay() {
   }
 
   if (cost == null) {
-    const durationCost = estimatePriceFromDuration(model, state.durationSeconds);
+    const durationCost = estimatePriceFromDuration(pricing, state.durationSeconds);
     if (durationCost != null) {
       cost = formatCost(durationCost);
       note = `Prix estimé à partir de la durée audio (${model}).`;
@@ -392,8 +418,8 @@ function updateUsageHint() {
 
 function applyUsage(usage) {
   if (!usage) return;
-  const inputTokens = Number(usage.input_tokens ?? 0);
-  const outputTokens = Number(usage.output_tokens ?? 0);
+  const inputTokens = Number(usage.input_tokens ?? usage.prompt_tokens ?? 0);
+  const outputTokens = Number(usage.output_tokens ?? usage.completion_tokens ?? 0);
   const totalTokens = Number(usage.total_tokens ?? inputTokens + outputTokens);
   state.usage.input += inputTokens;
   state.usage.output += outputTokens;
@@ -410,7 +436,7 @@ function applyUsage(usage) {
 }
 
 function getMaxSegmentDurationSeconds(model) {
-  const minutes = MAX_SEGMENT_MINUTES_BY_MODEL[model] ?? 20;
+  const minutes = getModelConfig(model)?.maxMinutes ?? DEFAULT_MAX_SEGMENT_MINUTES;
   if (!Number.isFinite(minutes) || minutes <= 0) return null;
   return minutes * 60;
 }
@@ -549,13 +575,6 @@ function sanitizeBaseName(name) {
   return name.replace(/\.[^/.]+$/, "").replace(/[^a-z0-9-_]+/gi, "-");
 }
 
-function resolveResponseFormat(model) {
-  if (model === "whisper-1") {
-    return "verbose_json";
-  }
-  return "json";
-}
-
 function isTokenLimitError(message) {
   if (!message) return false;
   const normalized = message.toLowerCase();
@@ -567,6 +586,22 @@ function isTokenLimitError(message) {
     normalized.includes("context length") ||
     normalized.includes("token limit")
   );
+}
+
+function extractApiErrorMessage(errorText) {
+  if (!errorText) return "";
+  try {
+    const parsed = JSON.parse(errorText);
+    if (parsed.error?.message) return String(parsed.error.message);
+    if (parsed.message) return String(parsed.message);
+    if (Array.isArray(parsed.detail) && parsed.detail[0]?.msg) {
+      return String(parsed.detail[0].msg);
+    }
+    if (parsed.detail) return String(parsed.detail);
+  } catch (error) {
+    // Ignore parse failures.
+  }
+  return "";
 }
 
 function extensionFromMimeType(mimeType) {
@@ -1038,6 +1073,7 @@ async function transcribeChunkWithRetry({
   signal,
 }) {
   const filename = buildSegmentFilename(baseName, file, chunk);
+  const providerConfig = getProviderConfig(model);
   for (let attempt = 1; attempt <= MAX_TRANSCRIBE_ATTEMPTS; attempt += 1) {
     throwIfAborted(signal);
     const attemptLabel =
@@ -1047,14 +1083,16 @@ async function transcribeChunkWithRetry({
     const formData = new FormData();
     formData.append("file", chunk.blob, filename);
     formData.append("model", model);
-    formData.append("response_format", resolveResponseFormat(model));
+    if (providerConfig.responseFormat) {
+      formData.append("response_format", providerConfig.responseFormat);
+    }
     if (language) {
       formData.append("language", language);
     }
 
     let response;
     try {
-      response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+      response = await fetch(providerConfig.endpoint, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${apiKey}`,
@@ -1089,16 +1127,10 @@ async function transcribeChunkWithRetry({
         continue;
       }
       const errorText = await response.text();
-      let message = errorText || "Erreur API OpenAI.";
-      try {
-        const parsed = JSON.parse(errorText);
-        if (parsed.error?.message) {
-          message = parsed.error.message;
-        }
-      } catch (err) {
-        // Ignore JSON parse errors.
-      }
-      throw new Error(message);
+      const parsedMessage = extractApiErrorMessage(errorText);
+      const message =
+        parsedMessage || errorText || `Erreur API ${providerConfig.label}.`;
+      throw new Error(message.trim());
     }
 
     return response.json();
@@ -1114,7 +1146,7 @@ async function transcribe() {
 
   if (!apiKey) {
     clearStatus();
-    setStatus("Veuillez renseigner votre clé API OpenAI.");
+    setStatus(`Veuillez renseigner votre clé API ${getProviderLabel(model)}.`);
     return;
   }
   if (!file) {
