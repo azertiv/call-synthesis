@@ -21,6 +21,11 @@ const HISTORY_ENABLED_KEY = "callSynthesis.historyEnabled";
 const HISTORY_LIMIT = 30;
 const OVERLAP_MIN_WORDS = 6;
 const OVERLAP_MAX_WORDS = 80;
+const SEGMENT_DIAGNOSTICS_ENABLED = true;
+const SEGMENT_DIAGNOSTIC_PREVIEW_CHARS = 80;
+const SEGMENT_EMPTY_TEXT_MIN_SECONDS = 45;
+const SEGMENT_EMPTY_TEXT_MIN_BYTES = 30000;
+const SEGMENT_COVERAGE_TOLERANCE_SECONDS = 2;
 
 const ICONS = {
   open:
@@ -115,6 +120,190 @@ function formatDuration(seconds) {
   const hours = Math.floor(minutesTotal / 60);
   const minutes = minutesTotal % 60;
   return `${hours} h ${minutes} min`;
+}
+
+function formatTimestamp(seconds) {
+  if (!Number.isFinite(seconds)) return "—";
+  const rounded = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(rounded / 3600);
+  const minutes = Math.floor((rounded % 3600) / 60);
+  const secs = rounded % 60;
+  if (hours) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  }
+  return `${minutes}:${String(secs).padStart(2, "0")}`;
+}
+
+function getSegmentDurationSeconds(chunk) {
+  const start = Number(chunk?.startSeconds);
+  const end = Number(chunk?.endSeconds);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  return Math.max(0, end - start);
+}
+
+function sortSegments(chunks) {
+  return [...chunks].sort((a, b) => {
+    const aStart = Number.isFinite(a?.startSeconds) ? a.startSeconds : 0;
+    const bStart = Number.isFinite(b?.startSeconds) ? b.startSeconds : 0;
+    if (aStart !== bStart) return aStart - bStart;
+    const aIndex = Number.isFinite(a?.index) ? a.index : 0;
+    const bIndex = Number.isFinite(b?.index) ? b.index : 0;
+    return aIndex - bIndex;
+  });
+}
+
+function normalizeSegments(chunks, durationSeconds) {
+  if (!Array.isArray(chunks)) return [];
+  const normalized = chunks.map((chunk, idx) => {
+    const startSeconds = Number.isFinite(chunk?.startSeconds) ? chunk.startSeconds : 0;
+    const endSeconds = Number.isFinite(chunk?.endSeconds)
+      ? chunk.endSeconds
+      : Number.isFinite(durationSeconds)
+        ? durationSeconds
+        : null;
+    const index = Number.isFinite(chunk?.index) ? chunk.index : idx + 1;
+    return { ...chunk, index, startSeconds, endSeconds };
+  });
+  return sortSegments(normalized);
+}
+
+function logSegmentPlan(chunks, durationSeconds) {
+  if (!SEGMENT_DIAGNOSTICS_ENABLED) return;
+  const durationLabel = Number.isFinite(durationSeconds)
+    ? formatDuration(durationSeconds)
+    : "—";
+  setStatus(`Segments préparés : ${chunks.length} · durée audio ${durationLabel}.`, true);
+  chunks.forEach((chunk, idx) => {
+    const label = Number.isFinite(chunk?.index) ? chunk.index : idx + 1;
+    const start = formatTimestamp(chunk?.startSeconds);
+    const end = formatTimestamp(chunk?.endSeconds);
+    const segmentDuration = getSegmentDurationSeconds(chunk);
+    const durationText = Number.isFinite(segmentDuration)
+      ? formatDuration(segmentDuration)
+      : "—";
+    const bytes = formatBytes(chunk?.blob?.size ?? 0);
+    setStatus(`Segment ${label} : ${start} -> ${end} (${durationText}) · ${bytes}.`, true);
+  });
+  console.info(
+    "Segments préparés",
+    chunks.map((chunk, idx) => ({
+      index: Number.isFinite(chunk?.index) ? chunk.index : idx + 1,
+      startSeconds: chunk?.startSeconds ?? null,
+      endSeconds: chunk?.endSeconds ?? null,
+      bytes: chunk?.blob?.size ?? 0,
+    })),
+  );
+}
+
+function logSegmentResults(chunks, transcriptParts) {
+  if (!SEGMENT_DIAGNOSTICS_ENABLED) return;
+  setStatus("Segments transcrits :", true);
+  chunks.forEach((chunk, idx) => {
+    const label = Number.isFinite(chunk?.index) ? chunk.index : idx + 1;
+    const text = (transcriptParts[idx] || "").trim();
+    const normalized = text.replace(/\s+/g, " ").trim();
+    const preview = normalized.slice(0, SEGMENT_DIAGNOSTIC_PREVIEW_CHARS);
+    const suffix = normalized.length > SEGMENT_DIAGNOSTIC_PREVIEW_CHARS ? "..." : "";
+    setStatus(
+      `Segment ${label} : ${text.length} caract. · "${preview}${suffix}"`,
+      true,
+    );
+  });
+  console.info(
+    "Segments transcrits",
+    chunks.map((chunk, idx) => {
+      const text = (transcriptParts[idx] || "").trim();
+      return {
+        index: Number.isFinite(chunk?.index) ? chunk.index : idx + 1,
+        textLength: text.length,
+        preview: text.replace(/\s+/g, " ").trim().slice(0, SEGMENT_DIAGNOSTIC_PREVIEW_CHARS),
+      };
+    }),
+  );
+}
+
+function checkSegmentCoverage(chunks, durationSeconds) {
+  const errors = [];
+  const warnings = [];
+  if (!Number.isFinite(durationSeconds) || !chunks.length) {
+    return { errors, warnings };
+  }
+  const expected = Math.max(1, Math.ceil(durationSeconds / SEGMENT_TARGET_SECONDS));
+  if (chunks.length !== expected) {
+    errors.push(`Segments attendus : ${expected}, reçus : ${chunks.length}.`);
+  }
+  const indexSet = new Set();
+  const duplicates = [];
+  const missing = [];
+  chunks.forEach((chunk, idx) => {
+    const label = Number.isFinite(chunk?.index) ? chunk.index : idx + 1;
+    if (indexSet.has(label)) {
+      duplicates.push(label);
+    }
+    indexSet.add(label);
+  });
+  for (let i = 1; i <= expected; i += 1) {
+    if (!indexSet.has(i)) {
+      missing.push(i);
+    }
+  }
+  if (missing.length) {
+    errors.push(`Segments manquants : ${missing.join(", ")}.`);
+  }
+  if (duplicates.length) {
+    errors.push(`Segments dupliqués : ${duplicates.join(", ")}.`);
+  }
+  const starts = chunks
+    .map((chunk) => chunk?.startSeconds)
+    .filter((value) => Number.isFinite(value));
+  const ends = chunks
+    .map((chunk) => chunk?.endSeconds)
+    .filter((value) => Number.isFinite(value));
+  if (starts.length && ends.length) {
+    const minStart = Math.min(...starts);
+    const maxEnd = Math.max(...ends);
+    if (minStart > SEGMENT_COVERAGE_TOLERANCE_SECONDS) {
+      warnings.push(
+        `Couverture segments démarre à ${formatTimestamp(minStart)}.`,
+      );
+    }
+    if (maxEnd < durationSeconds - SEGMENT_COVERAGE_TOLERANCE_SECONDS) {
+      warnings.push(
+        `Couverture segments s'arrête à ${formatTimestamp(maxEnd)}.`,
+      );
+    }
+  }
+  return { errors, warnings };
+}
+
+function isSuspiciousEmptyTranscript(chunk, text) {
+  const trimmed = (text || "").trim();
+  if (trimmed) return false;
+  const duration = getSegmentDurationSeconds(chunk);
+  const size = Number(chunk?.blob?.size ?? 0);
+  if (Number.isFinite(duration) && duration < SEGMENT_EMPTY_TEXT_MIN_SECONDS) {
+    return false;
+  }
+  if (Number.isFinite(size) && size < SEGMENT_EMPTY_TEXT_MIN_BYTES) {
+    return false;
+  }
+  return true;
+}
+
+function findTranscriptIssues(chunks, transcriptParts) {
+  const missing = [];
+  const empty = [];
+  chunks.forEach((chunk, idx) => {
+    const label = Number.isFinite(chunk?.index) ? chunk.index : idx + 1;
+    if (typeof transcriptParts[idx] !== "string") {
+      missing.push(label);
+      return;
+    }
+    if (isSuspiciousEmptyTranscript(chunk, transcriptParts[idx])) {
+      empty.push(label);
+    }
+  });
+  return { missing, empty };
 }
 
 function formatHistoryDate(timestamp) {
@@ -1064,14 +1253,21 @@ async function prepareFile(file, options = {}) {
 
   if (duration <= SEGMENT_TARGET_SECONDS) {
     setStatus("Fichier accepté sans découpage.");
+    const chunks = normalizeSegments(
+      [{ blob: file, index: 1, isOriginal: true, startSeconds: 0, endSeconds: duration }],
+      duration,
+    );
     return {
-      chunks: [{ blob: file, index: 1, isOriginal: true }],
+      chunks,
       totalSize: file.size,
       usedOriginal: true,
+      durationSeconds: duration,
     };
   }
 
-  return ffmpegSegmentByDuration(file, duration, { signal });
+  const segmented = await ffmpegSegmentByDuration(file, duration, { signal });
+  const chunks = normalizeSegments(segmented.chunks, duration);
+  return { ...segmented, chunks, durationSeconds: duration };
 }
 
 async function analyzeFile(file) {
@@ -1219,7 +1415,12 @@ async function transcribe() {
     if (!cached) {
       state.prepared = { ...prepared, file };
     }
-    const { chunks, totalSize, usedOriginal } = prepared;
+    const durationSeconds = Number.isFinite(prepared.durationSeconds)
+      ? prepared.durationSeconds
+      : state.durationSeconds;
+    let { chunks, totalSize, usedOriginal } = prepared;
+    chunks = normalizeSegments(chunks, durationSeconds);
+    prepared.chunks = chunks;
     if (!state.segments.length) {
       setSegments(chunks, file);
     }
@@ -1230,6 +1431,14 @@ async function transcribe() {
     const totalChunks = chunks.length;
     if (!totalChunks) {
       throw new Error("Aucun segment a transcrire.");
+    }
+    logSegmentPlan(chunks, durationSeconds);
+    const coverageCheck = checkSegmentCoverage(chunks, durationSeconds);
+    coverageCheck.warnings.forEach((warning) => {
+      setStatus(warning, true);
+    });
+    if (coverageCheck.errors.length) {
+      throw new Error(coverageCheck.errors.join(" "));
     }
     const transcriptParts = new Array(totalChunks).fill("");
     setProgressStatus(`Transcription : 0/${totalChunks} segment(s) termines.`);
@@ -1304,6 +1513,19 @@ async function transcribe() {
       };
       launchNext();
     });
+
+    logSegmentResults(chunks, transcriptParts);
+    const transcriptIssues = findTranscriptIssues(chunks, transcriptParts);
+    if (transcriptIssues.missing.length || transcriptIssues.empty.length) {
+      const details = [];
+      if (transcriptIssues.missing.length) {
+        details.push(`manquants: ${transcriptIssues.missing.join(", ")}`);
+      }
+      if (transcriptIssues.empty.length) {
+        details.push(`sans texte: ${transcriptIssues.empty.join(", ")}`);
+      }
+      throw new Error(`Transcription incomplète (${details.join("; ")}).`);
+    }
 
     const fullTranscript = mergeTranscriptParts(transcriptParts);
     const transcriptValue = fullTranscript || "(Aucun texte retourne)";
