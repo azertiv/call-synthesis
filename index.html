@@ -4,10 +4,10 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
-    <title>Call Synthesis — Transcription iOS + OpenAI &amp; Mistral</title>
+    <title>Call Synthesis — Transcription iOS + Mistral</title>
     <meta
       name="description"
-      content="Transcrivez vos mémos vocaux iOS avec l'API OpenAI ou Mistral, gérez la taille des fichiers et suivez l'usage des tokens."
+      content="Transcrivez vos mémos vocaux iOS avec Mistral Voxtral Mini Transcribe, gérez la durée et suivez l'usage des tokens."
     />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -83,10 +83,10 @@
         </div>
       </div>
       <div class="hero-text">
-        <h1>Votre dictaphone iOS, une transcription claire et instantanée.</h1>
+        <h1>Votre dictaphone iOS, une transcription claire et rapide.</h1>
         <p>
-          Importez vos fichiers depuis Fichiers, utilisez votre propre clé OpenAI ou Mistral, et
-          obtenez une transcription complète avec suivi des tokens. Tout reste dans votre navigateur.
+          Importez vos fichiers depuis Fichiers, utilisez votre clé Mistral, et obtenez une
+          transcription complète avec suivi des tokens. Tout reste dans votre navigateur.
         </p>
       </div>
       <div class="hero-meta">
@@ -95,8 +95,8 @@
           <span class="meta-detail">Aucune infra serveur nécessaire</span>
         </div>
         <div>
-          <span class="meta-title">Limite fichier</span>
-          <span class="meta-detail">25 Mo par fichier, gestion auto</span>
+          <span class="meta-title">Limite durée</span>
+          <span class="meta-detail">Découpe dès 25 min (limite 30 min)</span>
         </div>
       </div>
     </header>
@@ -108,7 +108,7 @@
           <p>Vos clés ne quittent pas votre navigateur.</p>
         </div>
         <label class="field">
-          <span>Clé API (OpenAI / Mistral)</span>
+          <span>Clé API (Mistral)</span>
           <input
             type="password"
             id="apiKey"
@@ -117,6 +117,7 @@
             spellcheck="false"
           />
         </label>
+        <div class="hint">Modèle utilisé : Voxtral Mini Transcribe (Mistral).</div>
         <div class="row">
           <label class="toggle">
             <input type="checkbox" id="rememberKey" />
@@ -125,24 +126,16 @@
           <button class="ghost" id="clearKey">Effacer</button>
         </div>
         <label class="field">
-          <span>Modèle</span>
-          <select id="model">
-            <option value="gpt-4o-mini-transcribe">gpt-4o-mini-transcribe · OpenAI</option>
-            <option value="voxtral-mini-latest">Voxtral Mini Transcribe · Mistral</option>
-          </select>
-        </label>
-        <div class="hint" id="modelPriceHint"></div>
-        <label class="field">
           <span>Langue (optionnel)</span>
           <input type="text" id="language" placeholder="fr, en, es..." />
         </label>
         <div class="hint">
-          Les fichiers &gt; 25 Mo sont découpés par FFmpeg sans ré-encodage (CPU local, pas de backend).
-          Premier chargement FFmpeg : ~32 Mo.
+          FFmpeg est utilisé uniquement si la durée dépasse 25 minutes (découpe locale, pas de backend).
+          Chevauchement de 10s pour éviter les coupures. Premier chargement FFmpeg : ~32 Mo.
         </div>
         <div class="notice">
           <strong>Conseil</strong> : pour un meilleur résultat, utilisez un fichier clair et peu
-          bruité. Les fichiers &gt; 25 Mo seront découpés automatiquement (sans ré-encodage).
+          bruité. Les fichiers &gt; 25 minutes sont segmentés automatiquement.
         </div>
       </section>
 
@@ -175,7 +168,7 @@
       <section class="panel status">
         <div class="panel-header">
           <h2>Statut &amp; usage</h2>
-          <p>Suivi en temps réel du traitement et des tokens.</p>
+          <p>Suivi du traitement et des tokens.</p>
         </div>
         <div class="status-log" id="statusLog">
           <div class="status-line idle">En attente d'un fichier.</div>
@@ -197,13 +190,8 @@
             <span class="stat-label">Estimation</span>
             <span class="stat-value" id="tokensEstimate">—</span>
           </div>
-          <div>
-            <span class="stat-label">Prix total</span>
-            <span class="stat-value" id="priceTotal">—</span>
-          </div>
         </div>
         <div class="hint" id="usageHint">L'estimation se base sur le texte si l'API ne renvoie pas l'usage.</div>
-        <div class="hint" id="priceHint"></div>
         <div class="segments">
           <div class="segments-header">
             <span>Segments générés</span>
@@ -231,7 +219,7 @@
     <footer class="footer">
       <div>
         <span>Vos fichiers ne sont pas stockés.</span>
-        <span>Tout passe directement vers les APIs OpenAI ou Mistral.</span>
+        <span>Tout passe directement vers l'API Mistral.</span>
       </div>
       <div>
         <span>Astuce : partagez ce site via GitHub Pages.</span>
