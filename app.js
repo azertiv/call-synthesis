@@ -1319,6 +1319,8 @@ elements.dropzone.addEventListener("drop", (event) => {
   event.preventDefault();
   event.stopPropagation();
   elements.dropzone.classList.remove("dragover");
+  dragDepth = 0;
+  setGlobalDragActive(false);
   const file = event.dataTransfer.files?.[0] || null;
   if (file) {
     setFile(file);
