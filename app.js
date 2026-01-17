@@ -1,5 +1,4 @@
 const MODEL_ID = "voxtral-mini-latest";
-const MODEL_FALLBACK_ID = "voxtral-small-latest";
 const PROVIDER_CONFIG = {
   label: "Mistral",
   endpoint: "https://api.mistral.ai/v1/audio/transcriptions",
@@ -28,8 +27,6 @@ const TIMESTAMP_GRANULARITIES = ["segment"];
 const PROMPT_AUDIO_SECONDS_TOLERANCE = 5;
 const SEGMENT_END_SECONDS_TOLERANCE = 5;
 const RESPONSE_FORMAT_VERBOSE = "verbose_json";
-const RESPONSE_FORMAT_TEXT = "text";
-const RETRY_TEXT_ONLY_ON_CUTOFF = true;
 
 const ICONS = {
   open:
@@ -92,6 +89,7 @@ const state = {
   file: null,
   objectUrl: null,
   usage: { input: 0, output: 0, total: 0 },
+  usageAudioSeconds: 0,
   usageSeen: false,
   durationSeconds: null,
   processing: false,
@@ -171,18 +169,6 @@ function getTranscriptionCoverage(chunk, data) {
   const usageSeconds = Number(data?.usage?.prompt_audio_seconds);
   const maxEndSeconds = getMaxSegmentEndSeconds(data?.segments);
   return { expectedSeconds, usageSeconds, maxEndSeconds };
-}
-
-function hasTimestampCutoff(coverage) {
-  const { expectedSeconds, usageSeconds, maxEndSeconds } = coverage || {};
-  if (!Number.isFinite(expectedSeconds) || !Number.isFinite(maxEndSeconds)) return false;
-  if (
-    Number.isFinite(usageSeconds) &&
-    usageSeconds + PROMPT_AUDIO_SECONDS_TOLERANCE < expectedSeconds
-  ) {
-    return false;
-  }
-  return maxEndSeconds + SEGMENT_END_SECONDS_TOLERANCE < expectedSeconds;
 }
 
 function logTranscriptionCoverage({ chunkIndex, totalChunks, chunk, data }) {
@@ -515,14 +501,35 @@ function updateUsageHint() {
   elements.usageHint.textContent = state.usageSeen ? "Usage API." : "Estimation locale.";
 }
 
+function toNumberOrNull(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function extractUsageFields(usage) {
+  const promptAudioSeconds = toNumberOrNull(usage?.prompt_audio_seconds);
+  const promptTokens = toNumberOrNull(usage?.prompt_tokens ?? usage?.input_tokens);
+  const completionTokens = toNumberOrNull(usage?.completion_tokens ?? usage?.output_tokens);
+  const totalFromUsage = toNumberOrNull(usage?.total_tokens);
+  const totalTokens =
+    totalFromUsage ??
+    (promptTokens != null && completionTokens != null ? promptTokens + completionTokens : null);
+  return {
+    promptAudioSeconds,
+    promptTokens,
+    completionTokens,
+    totalTokens,
+  };
+}
+
 function applyUsage(usage) {
   if (!usage) return;
-  const inputTokens = Number(usage.input_tokens ?? usage.prompt_tokens ?? 0);
-  const outputTokens = Number(usage.output_tokens ?? usage.completion_tokens ?? 0);
-  const totalTokens = Number(usage.total_tokens ?? inputTokens + outputTokens);
-  state.usage.input += inputTokens;
-  state.usage.output += outputTokens;
-  state.usage.total += totalTokens;
+  const { promptAudioSeconds, promptTokens, completionTokens, totalTokens } =
+    extractUsageFields(usage);
+  state.usage.input += promptTokens ?? 0;
+  state.usage.output += completionTokens ?? 0;
+  state.usage.total += totalTokens ?? 0;
+  state.usageAudioSeconds += promptAudioSeconds ?? 0;
   state.usageSeen = true;
   setTokens({
     input: state.usage.input || "—",
@@ -531,6 +538,22 @@ function applyUsage(usage) {
     estimate: "—",
   });
   updateUsageHint();
+}
+
+function logUsageToConsole({ chunkIndex, totalChunks, usage }) {
+  const { promptAudioSeconds, promptTokens, completionTokens, totalTokens } =
+    extractUsageFields(usage);
+  const segmentLabel = `segment ${chunkIndex + 1}/${totalChunks}`;
+  console.info(`[Usage] ${segmentLabel} prompt_audio_seconds:`, promptAudioSeconds);
+  console.info(`[Usage] ${segmentLabel} prompt_tokens:`, promptTokens);
+  console.info(`[Usage] ${segmentLabel} completion_tokens:`, completionTokens);
+  console.info(`[Usage] ${segmentLabel} total_tokens:`, totalTokens);
+  console.info(`[Usage total] ${segmentLabel}`, {
+    prompt_audio_seconds: state.usageAudioSeconds,
+    prompt_tokens: state.usage.input,
+    completion_tokens: state.usage.output,
+    total_tokens: state.usage.total,
+  });
 }
 
 function updateSegmentsCount() {
@@ -934,6 +957,7 @@ function openHistoryEntry(id) {
       total: entry.tokens.total || 0,
     };
     state.usageSeen = true;
+    state.usageAudioSeconds = 0;
     setTokens({
       input: state.usage.input || "—",
       output: state.usage.output || "—",
@@ -943,6 +967,7 @@ function openHistoryEntry(id) {
   } else {
     state.usage = { input: 0, output: 0, total: 0 };
     state.usageSeen = false;
+    state.usageAudioSeconds = 0;
     setTokens({
       input: "—",
       output: "—",
@@ -1087,6 +1112,7 @@ function setFile(file) {
   state.durationSeconds = null;
   state.usage = { input: 0, output: 0, total: 0 };
   state.usageSeen = false;
+  state.usageAudioSeconds = 0;
   state.prepared = null;
   setProcessing(state.processing);
   elements.transcript.value = "";
@@ -1120,6 +1146,7 @@ function resetTranscriptionState() {
   elements.transcript.value = "";
   setTokens({ input: "—", output: "—", total: "—", estimate: "—" });
   state.usage = { input: 0, output: 0, total: 0 };
+  state.usageAudioSeconds = 0;
   state.usageSeen = false;
   updateUsageHint();
   resetProgressBar();
@@ -1470,14 +1497,9 @@ async function transcribeChunkWithRetry({
   file,
   baseName,
   signal,
-  modelId = MODEL_ID,
-  includeTimestamps = true,
-  responseFormat = null,
 }) {
   const filename = buildSegmentFilename(baseName, file, chunk);
-  let useTimestamps = Boolean(includeTimestamps && timestampDiagnosticsActive);
-  let responseFormatValue = responseFormat;
-  let allowImplicitVerbose = true;
+  const useTimestamps = Boolean(timestampDiagnosticsActive);
   for (let attempt = 1; attempt <= MAX_TRANSCRIBE_ATTEMPTS; attempt += 1) {
     throwIfAborted(signal);
     const attemptLabel =
@@ -1486,15 +1508,11 @@ async function transcribeChunkWithRetry({
 
     const formData = new FormData();
     formData.append("file", chunk.blob, filename);
-    formData.append("model", modelId);
+    formData.append("model", MODEL_ID);
     if (language) {
       formData.append("language", language);
     }
-    const effectiveResponseFormat =
-      responseFormatValue || (allowImplicitVerbose && useTimestamps ? RESPONSE_FORMAT_VERBOSE : null);
-    if (effectiveResponseFormat) {
-      formData.append("response_format", effectiveResponseFormat);
-    }
+    formData.append("response_format", RESPONSE_FORMAT_VERBOSE);
     if (useTimestamps) {
       TIMESTAMP_GRANULARITIES.forEach((granularity) => {
         formData.append("timestamp_granularities", granularity);
@@ -1538,30 +1556,6 @@ async function transcribeChunkWithRetry({
         continue;
       }
       const errorText = await response.text();
-      if (
-        useTimestamps &&
-        response.status === 400 &&
-        /timestamp/i.test(errorText)
-      ) {
-        timestampDiagnosticsActive = false;
-        useTimestamps = false;
-        setStatus("Timestamp API refuse. Relance sans timestamps.", true);
-        if (attempt < MAX_TRANSCRIBE_ATTEMPTS) {
-          continue;
-        }
-      }
-      if (
-        responseFormatValue &&
-        response.status === 400 &&
-        /response[_\s]?format/i.test(errorText)
-      ) {
-        responseFormatValue = null;
-        allowImplicitVerbose = false;
-        setStatus("Format de reponse non supporte. Relance sans format.", true);
-        if (attempt < MAX_TRANSCRIBE_ATTEMPTS) {
-          continue;
-        }
-      }
       const parsedMessage = extractApiErrorMessage(errorText);
       const message = parsedMessage || errorText || `Erreur API ${PROVIDER_CONFIG.label}.`;
       throw new Error(message.trim());
@@ -1570,80 +1564,6 @@ async function transcribeChunkWithRetry({
     return response.json();
   }
   throw new Error("Echec transcription segment.");
-}
-
-async function transcribeChunk({
-  apiKey,
-  language,
-  chunk,
-  chunkIndex,
-  totalChunks,
-  file,
-  baseName,
-  signal,
-}) {
-  const usageEntries = [];
-  const primaryData = await transcribeChunkWithRetry({
-    apiKey,
-    language,
-    chunk,
-    chunkIndex,
-    totalChunks,
-    file,
-    baseName,
-    signal,
-    modelId: MODEL_ID,
-    includeTimestamps: true,
-    responseFormat: RESPONSE_FORMAT_VERBOSE,
-  });
-  if (primaryData?.usage) {
-    usageEntries.push(primaryData.usage);
-  }
-  const coverage = logTranscriptionCoverage({
-    chunkIndex,
-    totalChunks,
-    chunk,
-    data: primaryData,
-  });
-  if (!RETRY_TEXT_ONLY_ON_CUTOFF || !hasTimestampCutoff(coverage)) {
-    return { data: primaryData, usageEntries };
-  }
-
-  const fallbackModel =
-    MODEL_FALLBACK_ID && MODEL_FALLBACK_ID !== MODEL_ID ? MODEL_FALLBACK_ID : MODEL_ID;
-  const modelLabel = fallbackModel !== MODEL_ID ? ` via ${fallbackModel}` : "";
-  setStatus(
-    `Segment ${chunkIndex + 1}/${totalChunks} : sortie tronquee, relance en texte brut${modelLabel}.`,
-    true,
-  );
-  try {
-    const fallbackData = await transcribeChunkWithRetry({
-      apiKey,
-      language,
-      chunk,
-      chunkIndex,
-      totalChunks,
-      file,
-      baseName,
-      signal,
-      modelId: fallbackModel,
-      includeTimestamps: false,
-      responseFormat: RESPONSE_FORMAT_TEXT,
-    });
-    if (fallbackData?.usage) {
-      usageEntries.push(fallbackData.usage);
-    }
-    return { data: fallbackData, usageEntries };
-  } catch (error) {
-    if (isAbortError(error)) {
-      throw error;
-    }
-    setStatus(
-      `Segment ${chunkIndex + 1}/${totalChunks} : relance impossible, conservation du premier resultat.`,
-      true,
-    );
-    return { data: primaryData, usageEntries };
-  }
 }
 
 async function transcribe() {
@@ -1721,7 +1641,7 @@ async function transcribe() {
           nextIndex += 1;
           const chunk = chunks[chunkIndex];
           active += 1;
-          transcribeChunk({
+          transcribeChunkWithRetry({
             apiKey,
             language,
             chunk,
@@ -1731,19 +1651,22 @@ async function transcribe() {
             baseName,
             signal,
           })
-            .then((result) => {
+            .then((data) => {
               if (finished) return;
-              const data = result?.data || {};
               const rawText = typeof data.text === "string" ? data.text : "";
               const segmentsText = buildTranscriptFromSegments(data.segments);
               const chunkText = (
                 segmentsText.length > rawText.length ? segmentsText : rawText
               ).trim();
               transcriptParts[chunkIndex] = chunkText;
-              const usageEntries = Array.isArray(result?.usageEntries)
-                ? result.usageEntries
-                : [];
-              usageEntries.forEach((usage) => applyUsage(usage));
+              logTranscriptionCoverage({
+                chunkIndex,
+                totalChunks,
+                chunk,
+                data,
+              });
+              applyUsage(data.usage);
+              logUsageToConsole({ chunkIndex, totalChunks, usage: data.usage });
               completed += 1;
               setProgressStatus(
                 `Transcription : ${completed}/${totalChunks} segment(s) termines.`,
