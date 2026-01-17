@@ -200,6 +200,23 @@
             <span>Statut &amp; usage</span>
           </h2>
         </div>
+        <div class="progress-block" id="progressBlock" hidden>
+          <div class="progress-header">
+            <span class="progress-label" id="progressLabel">Transcription en cours</span>
+            <span class="progress-value" id="progressValue">0%</span>
+          </div>
+          <div
+            class="progress-track"
+            id="progressTrack"
+            role="progressbar"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow="0"
+          >
+            <div class="progress-fill" id="progressFill"></div>
+          </div>
+          <div class="progress-meta" id="progressMeta">0/0 segments</div>
+        </div>
         <div class="status-log" id="statusLog">
           <div class="status-line idle">En attente.</div>
         </div>

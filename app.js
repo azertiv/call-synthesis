@@ -44,6 +44,12 @@ const elements = {
   transcribeBtn: document.getElementById("transcribeBtn"),
   cancelBtn: document.getElementById("cancelBtn"),
   statusLog: document.getElementById("statusLog"),
+  progressBlock: document.getElementById("progressBlock"),
+  progressTrack: document.getElementById("progressTrack"),
+  progressFill: document.getElementById("progressFill"),
+  progressLabel: document.getElementById("progressLabel"),
+  progressValue: document.getElementById("progressValue"),
+  progressMeta: document.getElementById("progressMeta"),
   transcript: document.getElementById("transcript"),
   copyBtn: document.getElementById("copyBtn"),
   downloadBtn: document.getElementById("downloadBtn"),
@@ -300,6 +306,7 @@ function setStatus(message, isIdle = false) {
 function clearStatus() {
   elements.statusLog.innerHTML = "";
   progressLine = null;
+  resetProgressBar();
 }
 
 function setProgressStatus(message) {
@@ -310,6 +317,44 @@ function setProgressStatus(message) {
   }
   progressLine.textContent = message;
   elements.statusLog.scrollTop = elements.statusLog.scrollHeight;
+}
+
+function setProgressBar({ label, current, total }) {
+  if (!elements.progressBlock || !elements.progressTrack || !elements.progressFill) return;
+  const safeTotal = Number.isFinite(total) && total > 0 ? total : 0;
+  const safeCurrent = Number.isFinite(current) ? Math.max(0, current) : 0;
+  const clampedCurrent = safeTotal ? Math.min(safeCurrent, safeTotal) : safeCurrent;
+  const percent = safeTotal ? Math.round((clampedCurrent / safeTotal) * 100) : 0;
+  elements.progressBlock.hidden = false;
+  if (elements.progressLabel) {
+    elements.progressLabel.textContent = label || "Transcription en cours";
+  }
+  if (elements.progressValue) {
+    elements.progressValue.textContent = `${percent}%`;
+  }
+  if (elements.progressMeta) {
+    elements.progressMeta.textContent = safeTotal
+      ? `${clampedCurrent}/${safeTotal} segment${safeTotal > 1 ? "s" : ""}`
+      : "Preparation...";
+  }
+  elements.progressTrack.setAttribute("aria-valuenow", String(percent));
+  elements.progressFill.style.width = `${percent}%`;
+}
+
+function resetProgressBar() {
+  if (!elements.progressBlock || !elements.progressTrack || !elements.progressFill) return;
+  elements.progressBlock.hidden = true;
+  elements.progressFill.style.width = "0%";
+  elements.progressTrack.setAttribute("aria-valuenow", "0");
+  if (elements.progressValue) {
+    elements.progressValue.textContent = "0%";
+  }
+  if (elements.progressMeta) {
+    elements.progressMeta.textContent = "0/0 segments";
+  }
+  if (elements.progressLabel) {
+    elements.progressLabel.textContent = "Transcription en cours";
+  }
 }
 
 function setProcessing(isProcessing) {
@@ -740,6 +785,7 @@ function resetTranscriptionState() {
   state.usage = { input: 0, output: 0, total: 0 };
   state.usageSeen = false;
   updateUsageHint();
+  resetProgressBar();
 }
 
 function sanitizeBaseName(name) {
@@ -1187,6 +1233,7 @@ async function transcribe() {
     }
     const transcriptParts = new Array(totalChunks).fill("");
     setProgressStatus(`Transcription : 0/${totalChunks} segment(s) termines.`);
+    setProgressBar({ label: "Transcription en cours", current: 0, total: totalChunks });
 
     const parallelLimit = Math.max(1, Math.min(MAX_PARALLEL_REQUESTS, totalChunks));
     let completed = 0;
@@ -1226,6 +1273,11 @@ async function transcribe() {
               setProgressStatus(
                 `Transcription : ${completed}/${totalChunks} segment(s) termines.`,
               );
+              setProgressBar({
+                label: "Transcription en cours",
+                current: completed,
+                total: totalChunks,
+              });
               active -= 1;
               if (completed >= totalChunks) {
                 finished = true;
@@ -1293,6 +1345,7 @@ async function transcribe() {
     setProcessing(false);
     elements.transcribeBtn.textContent = "Transcrire";
     state.abortController = null;
+    resetProgressBar();
   }
 }
 
