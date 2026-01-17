@@ -16,6 +16,9 @@ const FFMPEG_WASM_FILE = "ffmpeg-core.wasm";
 const STORAGE_KEY = "callSynthesis.apiKey";
 const STORAGE_REMEMBER = "callSynthesis.remember";
 const THEME_STORAGE = "callSynthesis.theme";
+const HISTORY_STORAGE_KEY = "callSynthesis.history";
+const HISTORY_ENABLED_KEY = "callSynthesis.historyEnabled";
+const HISTORY_LIMIT = 30;
 const OVERLAP_MIN_WORDS = 6;
 const OVERLAP_MAX_WORDS = 80;
 
@@ -25,6 +28,7 @@ const elements = {
   clearKey: document.getElementById("clearKey"),
   language: document.getElementById("language"),
   dropzone: document.getElementById("dropzone"),
+  globalDrop: document.getElementById("globalDrop"),
   fileInput: document.getElementById("fileInput"),
   fileMeta: document.getElementById("fileMeta"),
   audioPreview: document.getElementById("audioPreview"),
@@ -43,6 +47,10 @@ const elements = {
   segmentsList: document.getElementById("segmentsList"),
   downloadSegmentsBtn: document.getElementById("downloadSegmentsBtn"),
   themeButtons: document.querySelectorAll("[data-theme-choice]"),
+  historyPanel: document.getElementById("historyPanel"),
+  historyEnabled: document.getElementById("historyEnabled"),
+  historyList: document.getElementById("historyList"),
+  historyEmpty: document.getElementById("historyEmpty"),
 };
 
 const state = {
@@ -56,6 +64,9 @@ const state = {
   cancelRequested: false,
   segments: [],
   segmentUrls: [],
+  history: [],
+  historyEnabled: true,
+  activeHistoryId: null,
 };
 
 const ffmpegState = {
@@ -85,6 +96,23 @@ function formatDuration(seconds) {
   const hours = Math.floor(minutesTotal / 60);
   const minutes = minutesTotal % 60;
   return `${hours} h ${minutes} min`;
+}
+
+function formatHistoryDate(timestamp) {
+  const date = new Date(timestamp);
+  if (!Number.isFinite(date.getTime())) return "";
+  return date.toLocaleString("fr-FR", { dateStyle: "medium", timeStyle: "short" });
+}
+
+function getFileBaseName(name) {
+  if (!name) return "";
+  return name.replace(/\.[^/.]+$/, "");
+}
+
+function buildHistoryTitle(file) {
+  const baseName = getFileBaseName(file?.name || "");
+  if (baseName.trim()) return baseName.trim();
+  return `Transcription ${formatHistoryDate(Date.now())}`;
 }
 
 function createAbortError() {
@@ -333,6 +361,242 @@ function clearSegments() {
   if (elements.downloadSegmentsBtn) {
     elements.downloadSegmentsBtn.disabled = true;
   }
+}
+
+function loadHistoryEntries() {
+  const raw = localStorage.getItem(HISTORY_STORAGE_KEY);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((entry) => {
+        if (!entry || typeof entry !== "object") return null;
+        const text = typeof entry.text === "string" ? entry.text : "";
+        if (!text.trim()) return null;
+        const createdAt = Number.isFinite(entry.createdAt) ? entry.createdAt : Date.now();
+        const tokens = entry.tokens && typeof entry.tokens === "object" ? entry.tokens : {};
+        return {
+          id:
+            typeof entry.id === "string"
+              ? entry.id
+              : `hist-${createdAt}-${Math.random().toString(36).slice(2, 8)}`,
+          title:
+            typeof entry.title === "string" && entry.title.trim()
+              ? entry.title.trim()
+              : "Transcription sans titre",
+          createdAt,
+          text,
+          fileName: typeof entry.fileName === "string" ? entry.fileName : "",
+          durationSeconds: Number.isFinite(entry.durationSeconds) ? entry.durationSeconds : null,
+          usageSeen: Boolean(entry.usageSeen),
+          tokens: {
+            input: Number(tokens.input) || 0,
+            output: Number(tokens.output) || 0,
+            total: Number(tokens.total) || 0,
+            estimate: Number(tokens.estimate) || 0,
+          },
+        };
+      })
+      .filter(Boolean)
+      .slice(0, HISTORY_LIMIT);
+  } catch (error) {
+    return [];
+  }
+}
+
+function saveHistoryEntries() {
+  try {
+    localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(state.history));
+  } catch (error) {
+    setStatus("Impossible de sauvegarder l'historique (stockage local plein ?).");
+  }
+}
+
+function renderHistory() {
+  if (!elements.historyList) return;
+  elements.historyList.innerHTML = "";
+  if (!state.historyEnabled) {
+    const empty = document.createElement("div");
+    empty.className = "history-empty";
+    empty.textContent = "Historique désactivé.";
+    elements.historyList.appendChild(empty);
+    return;
+  }
+  if (!state.history.length) {
+    const empty = document.createElement("div");
+    empty.className = "history-empty";
+    empty.textContent = "Aucune transcription sauvegardée.";
+    elements.historyList.appendChild(empty);
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  state.history.forEach((entry) => {
+    const item = document.createElement("div");
+    item.className = `history-item${entry.id === state.activeHistoryId ? " active" : ""}`;
+
+    const titleRow = document.createElement("div");
+    titleRow.className = "history-title";
+    const title = document.createElement("span");
+    title.textContent = entry.title;
+    titleRow.appendChild(title);
+
+    const metaRow = document.createElement("div");
+    metaRow.className = "history-meta";
+    const metaParts = [];
+    if (entry.fileName) {
+      metaParts.push(entry.fileName);
+    }
+    if (Number.isFinite(entry.durationSeconds)) {
+      metaParts.push(`Durée ${formatDuration(entry.durationSeconds)}`);
+    }
+    if (entry.tokens?.total) {
+      metaParts.push(`Tokens ${entry.tokens.total}`);
+    } else if (entry.tokens?.estimate) {
+      metaParts.push(`Tokens estimés ${entry.tokens.estimate}`);
+    }
+    const dateLabel = formatHistoryDate(entry.createdAt);
+    if (dateLabel) {
+      metaParts.push(dateLabel);
+    }
+    metaRow.textContent = metaParts.join(" · ");
+
+    const actions = document.createElement("div");
+    actions.className = "history-actions";
+
+    const openBtn = document.createElement("button");
+    openBtn.type = "button";
+    openBtn.className = "ghost small";
+    openBtn.textContent = "Ouvrir";
+    openBtn.addEventListener("click", () => openHistoryEntry(entry.id));
+
+    const renameBtn = document.createElement("button");
+    renameBtn.type = "button";
+    renameBtn.className = "ghost small";
+    renameBtn.textContent = "Renommer";
+    renameBtn.addEventListener("click", () => renameHistoryEntry(entry.id));
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "ghost small";
+    deleteBtn.textContent = "Supprimer";
+    deleteBtn.addEventListener("click", () => deleteHistoryEntry(entry.id));
+
+    actions.appendChild(openBtn);
+    actions.appendChild(renameBtn);
+    actions.appendChild(deleteBtn);
+
+    item.appendChild(titleRow);
+    if (metaRow.textContent) {
+      item.appendChild(metaRow);
+    }
+    item.appendChild(actions);
+    fragment.appendChild(item);
+  });
+
+  elements.historyList.appendChild(fragment);
+}
+
+function setHistoryEnabled(enabled) {
+  state.historyEnabled = Boolean(enabled);
+  if (elements.historyEnabled) {
+    elements.historyEnabled.checked = state.historyEnabled;
+  }
+  localStorage.setItem(HISTORY_ENABLED_KEY, state.historyEnabled ? "true" : "false");
+  renderHistory();
+}
+
+function createHistoryEntry({ text, file, durationSeconds, usage, usageSeen, estimate }) {
+  const createdAt = Date.now();
+  const id = `hist-${createdAt}-${Math.random().toString(36).slice(2, 8)}`;
+  return {
+    id,
+    title: buildHistoryTitle(file),
+    createdAt,
+    text,
+    fileName: file?.name || "",
+    durationSeconds: Number.isFinite(durationSeconds) ? durationSeconds : null,
+    usageSeen: Boolean(usageSeen),
+    tokens: {
+      input: Number(usage?.input) || 0,
+      output: Number(usage?.output) || 0,
+      total: Number(usage?.total) || 0,
+      estimate: Number(estimate) || 0,
+    },
+  };
+}
+
+function addHistoryEntry(entry) {
+  if (!entry || typeof entry.text !== "string" || !entry.text.trim()) return;
+  state.history = [entry, ...state.history.filter((item) => item.id !== entry.id)];
+  if (state.history.length > HISTORY_LIMIT) {
+    state.history = state.history.slice(0, HISTORY_LIMIT);
+  }
+  saveHistoryEntries();
+  state.activeHistoryId = entry.id;
+  if (state.historyEnabled) {
+    renderHistory();
+  }
+}
+
+function openHistoryEntry(id) {
+  const entry = state.history.find((item) => item.id === id);
+  if (!entry) return;
+  elements.transcript.value = entry.text;
+  const estimatedTokens = entry.tokens?.estimate || estimateTokens(entry.text);
+  if (entry.usageSeen) {
+    state.usage = {
+      input: entry.tokens.input || 0,
+      output: entry.tokens.output || 0,
+      total: entry.tokens.total || 0,
+    };
+    state.usageSeen = true;
+    setTokens({
+      input: state.usage.input || "—",
+      output: state.usage.output || "—",
+      total: state.usage.total || "—",
+      estimate: estimatedTokens || "—",
+    });
+  } else {
+    state.usage = { input: 0, output: 0, total: 0 };
+    state.usageSeen = false;
+    setTokens({
+      input: "—",
+      output: "—",
+      total: "—",
+      estimate: estimatedTokens || "—",
+    });
+  }
+  updateUsageHint();
+  state.activeHistoryId = entry.id;
+  renderHistory();
+  setStatus(`Transcription chargée : ${entry.title}.`);
+}
+
+function renameHistoryEntry(id) {
+  const entry = state.history.find((item) => item.id === id);
+  if (!entry) return;
+  const nextName = window.prompt("Nouveau nom pour la transcription :", entry.title);
+  if (!nextName) return;
+  const trimmed = nextName.trim();
+  if (!trimmed) return;
+  entry.title = trimmed;
+  saveHistoryEntries();
+  renderHistory();
+}
+
+function deleteHistoryEntry(id) {
+  const entry = state.history.find((item) => item.id === id);
+  if (!entry) return;
+  const confirmed = window.confirm(`Supprimer "${entry.title}" de l'historique ?`);
+  if (!confirmed) return;
+  state.history = state.history.filter((item) => item.id !== id);
+  if (state.activeHistoryId === id) {
+    state.activeHistoryId = null;
+  }
+  saveHistoryEntries();
+  renderHistory();
 }
 
 function buildSegmentFilename(baseName, file, chunk) {
@@ -904,7 +1168,8 @@ async function transcribe() {
     });
 
     const fullTranscript = mergeTranscriptParts(transcriptParts);
-    elements.transcript.value = fullTranscript || "(Aucun texte retourne)";
+    const transcriptValue = fullTranscript || "(Aucun texte retourne)";
+    elements.transcript.value = transcriptValue;
     const estimatedTokens = estimateTokens(fullTranscript);
     if (!state.usageSeen) {
       setTokens({
@@ -917,6 +1182,17 @@ async function transcribe() {
       elements.tokensEstimate.textContent = estimatedTokens || "—";
     }
     setStatus("Transcription terminee. Chevauchements nettoyes.");
+    if (state.historyEnabled && fullTranscript.trim()) {
+      const entry = createHistoryEntry({
+        text: transcriptValue,
+        file,
+        durationSeconds: state.durationSeconds,
+        usage: state.usage,
+        usageSeen: state.usageSeen,
+        estimate: estimatedTokens,
+      });
+      addHistoryEntry(entry);
+    }
     return;
   } catch (error) {
     if (state.cancelRequested || isAbortError(error)) {
@@ -988,6 +1264,7 @@ elements.dropzone.addEventListener("dragleave", () => {
 
 elements.dropzone.addEventListener("drop", (event) => {
   event.preventDefault();
+  event.stopPropagation();
   elements.dropzone.classList.remove("dragover");
   const file = event.dataTransfer.files?.[0] || null;
   if (file) {
@@ -1051,6 +1328,59 @@ elements.downloadBtn.addEventListener("click", () => {
   URL.revokeObjectURL(url);
 });
 
+function isFileDrag(event) {
+  const types = event.dataTransfer?.types;
+  if (!types) return false;
+  return Array.from(types).includes("Files");
+}
+
+let dragDepth = 0;
+
+function setGlobalDragActive(isActive) {
+  if (isActive) {
+    document.body.classList.add("is-dragging");
+    elements.dropzone.classList.add("dragover");
+  } else {
+    document.body.classList.remove("is-dragging");
+    elements.dropzone.classList.remove("dragover");
+  }
+}
+
+document.addEventListener("dragenter", (event) => {
+  if (!isFileDrag(event)) return;
+  dragDepth += 1;
+  setGlobalDragActive(true);
+});
+
+document.addEventListener("dragover", (event) => {
+  if (!isFileDrag(event)) return;
+  event.preventDefault();
+});
+
+document.addEventListener("dragleave", (event) => {
+  if (!isFileDrag(event)) return;
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (dragDepth === 0) {
+    setGlobalDragActive(false);
+  }
+});
+
+document.addEventListener("drop", (event) => {
+  if (!isFileDrag(event)) return;
+  event.preventDefault();
+  dragDepth = 0;
+  setGlobalDragActive(false);
+  const file = event.dataTransfer?.files?.[0] || null;
+  if (file) {
+    setFile(file);
+  }
+});
+
+document.addEventListener("dragend", () => {
+  dragDepth = 0;
+  setGlobalDragActive(false);
+});
+
 function normalizeThemeChoice(choice) {
   if (choice === "light" || choice === "dark" || choice === "system") {
     return choice;
@@ -1084,11 +1414,27 @@ function loadThemeChoice() {
   applyThemeChoice(stored || "system");
 }
 
+function loadHistoryState() {
+  const stored = localStorage.getItem(HISTORY_ENABLED_KEY);
+  state.historyEnabled = stored !== "false";
+  if (elements.historyEnabled) {
+    elements.historyEnabled.checked = state.historyEnabled;
+  }
+  state.history = loadHistoryEntries();
+  renderHistory();
+}
+
 if (elements.themeButtons?.length) {
   elements.themeButtons.forEach((button) => {
     button.addEventListener("click", () => {
       setThemeChoice(button.dataset.themeChoice);
     });
+  });
+}
+
+if (elements.historyEnabled) {
+  elements.historyEnabled.addEventListener("change", (event) => {
+    setHistoryEnabled(event.target.checked);
   });
 }
 
@@ -1133,5 +1479,6 @@ function loadStoredKey() {
 
 loadStoredKey();
 loadThemeChoice();
+loadHistoryState();
 clearStatus();
 setStatus("Prêt pour une transcription.", true);

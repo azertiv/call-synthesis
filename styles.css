@@ -327,6 +327,27 @@ textarea {
   border-radius: 12px;
 }
 
+.price-card {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--panel-soft);
+  font-size: 0.92rem;
+}
+
+.price-label {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.price-value {
+  font-weight: 600;
+}
+
 .dropzone {
   border: 2px dashed var(--drop-border);
   border-radius: 18px;
@@ -372,6 +393,55 @@ textarea {
   font-size: 1.3rem;
 }
 
+.global-drop {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+  z-index: 10;
+}
+
+.global-drop::before {
+  content: "";
+  position: absolute;
+  inset: 16px;
+  border-radius: 24px;
+  border: 2px dashed var(--accent);
+  background: var(--drop-hover);
+}
+
+.global-drop-card {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: var(--panel-strong);
+  box-shadow: var(--shadow);
+}
+
+.global-drop-icon {
+  width: 46px;
+  height: 46px;
+  border-radius: 16px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, var(--accent), #ffb347);
+  color: #fff;
+  font-weight: 700;
+  font-size: 1.1rem;
+}
+
+body.is-dragging .global-drop {
+  opacity: 1;
+}
+
 .file-meta {
   font-size: 0.92rem;
   color: var(--muted);
@@ -401,6 +471,11 @@ button:focus-visible {
 .ghost {
   background: var(--ghost);
   color: var(--ink);
+}
+
+.ghost.small {
+  padding: 6px 12px;
+  font-size: 0.82rem;
 }
 
 button:disabled {
@@ -513,6 +588,55 @@ button:disabled {
 .segment-size {
   color: var(--muted);
   font-size: 0.85rem;
+}
+
+.history-list {
+  display: grid;
+  gap: 10px;
+}
+
+.history-empty {
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px dashed var(--border);
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.history-item {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--panel-soft);
+}
+
+.history-item.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(255, 107, 74, 0.2);
+}
+
+.history-title {
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.history-meta {
+  color: var(--muted);
+  font-size: 0.85rem;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.history-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .footer {

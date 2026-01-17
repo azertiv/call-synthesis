@@ -20,6 +20,15 @@
   <body>
     <div class="bg-orbit"></div>
     <div class="bg-orbit second"></div>
+    <div class="global-drop" id="globalDrop" aria-hidden="true">
+      <div class="global-drop-card">
+        <div class="global-drop-icon">⬆</div>
+        <div>
+          <strong>Déposez votre fichier audio</strong>
+          <span>Le fichier sera chargé immédiatement.</span>
+        </div>
+      </div>
+    </div>
     <header class="hero">
       <div class="hero-top">
         <div class="brand">
@@ -118,6 +127,10 @@
           />
         </label>
         <div class="hint">Modèle utilisé : Voxtral Mini Transcribe (Mistral).</div>
+        <div class="price-card">
+          <span class="price-label">Prix estimé</span>
+          <span class="price-value">Audio Input/min $0.002 (Voxtral Mini Transcribe)</span>
+        </div>
         <div class="row">
           <label class="toggle">
             <input type="checkbox" id="rememberKey" />
@@ -212,6 +225,20 @@
         <div class="row end">
           <button class="ghost" id="copyBtn">Copier</button>
           <button class="ghost" id="downloadBtn">Télécharger</button>
+        </div>
+      </section>
+
+      <section class="panel history" id="historyPanel">
+        <div class="panel-header">
+          <h2>Historique</h2>
+          <p>Retrouvez, renommez ou supprimez vos transcriptions locales.</p>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="historyEnabled" />
+          <span>Activer l'historique sur cet appareil</span>
+        </label>
+        <div class="history-list" id="historyList">
+          <div class="history-empty" id="historyEmpty">Historique désactivé.</div>
         </div>
       </section>
     </main>
