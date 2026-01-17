@@ -4,7 +4,6 @@ const PROVIDER_CONFIG = {
   endpoint: "https://api.mistral.ai/v1/audio/transcriptions",
 };
 const MAX_PARALLEL_REQUESTS = 3;
-const USE_STREAMING_TRANSCRIPTION = true;
 const MAX_TRANSCRIBE_ATTEMPTS = 3;
 const RETRY_BACKOFF_BASE_MS = 700;
 const RETRY_BACKOFF_MAX_MS = 8000;
@@ -23,6 +22,10 @@ const HISTORY_LIMIT = 30;
 const HISTORY_PREVIEW_CHARS = 160;
 const OVERLAP_MIN_WORDS = 6;
 const OVERLAP_MAX_WORDS = 80;
+const TIMESTAMP_DIAGNOSTICS_ENABLED = true;
+const TIMESTAMP_GRANULARITIES = ["segment"];
+const PROMPT_AUDIO_SECONDS_TOLERANCE = 5;
+const SEGMENT_END_SECONDS_TOLERANCE = 5;
 
 const ICONS = {
   open:
@@ -45,6 +48,7 @@ const elements = {
   fileInput: document.getElementById("fileInput"),
   fileMeta: document.getElementById("fileMeta"),
   audioPreview: document.getElementById("audioPreview"),
+  ffmpegToggle: document.getElementById("ffmpegToggle"),
   transcribeBtn: document.getElementById("transcribeBtn"),
   cancelBtn: document.getElementById("cancelBtn"),
   statusLog: document.getElementById("statusLog"),
@@ -92,6 +96,7 @@ const state = {
   segments: [],
   segmentUrls: [],
   prepared: null,
+  ffmpegEnabled: true,
   segmentsVisible: false,
   history: [],
   historyEnabled: true,
@@ -105,6 +110,7 @@ const ffmpegState = {
 };
 
 let progressLine = null;
+let timestampDiagnosticsActive = TIMESTAMP_DIAGNOSTICS_ENABLED;
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return "—";
@@ -126,6 +132,78 @@ function formatDuration(seconds) {
   const hours = Math.floor(minutesTotal / 60);
   const minutes = minutesTotal % 60;
   return `${hours} h ${minutes} min`;
+}
+
+function getChunkExpectedSeconds(chunk) {
+  const duration = Number(chunk?.durationSeconds);
+  if (Number.isFinite(duration) && duration > 0) return duration;
+  const start = Number(chunk?.startSeconds);
+  const end = Number(chunk?.endSeconds);
+  if (Number.isFinite(start) && Number.isFinite(end)) {
+    return Math.max(0, end - start);
+  }
+  return null;
+}
+
+function getMaxSegmentEndSeconds(segments) {
+  if (!Array.isArray(segments) || !segments.length) return null;
+  const ends = segments
+    .map((segment) => segment?.end)
+    .filter((value) => Number.isFinite(value));
+  if (!ends.length) return null;
+  return Math.max(...ends);
+}
+
+function buildTranscriptFromSegments(segments) {
+  if (!Array.isArray(segments) || !segments.length) return "";
+  return segments
+    .map((segment) => (segment?.text || "").trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+function logTranscriptionCoverage({ chunkIndex, totalChunks, chunk, data }) {
+  if (!TIMESTAMP_DIAGNOSTICS_ENABLED) return;
+  const expectedSeconds = getChunkExpectedSeconds(chunk);
+  const usageSeconds = Number(data?.usage?.prompt_audio_seconds);
+  const maxEndSeconds = getMaxSegmentEndSeconds(data?.segments);
+  const parts = [];
+  if (Number.isFinite(expectedSeconds)) {
+    parts.push(`attendu ${formatDuration(expectedSeconds)}`);
+  }
+  if (Number.isFinite(usageSeconds)) {
+    parts.push(`API traite ${formatDuration(usageSeconds)}`);
+  }
+  if (Number.isFinite(maxEndSeconds)) {
+    parts.push(`dernier timestamp ${formatDuration(maxEndSeconds)}`);
+  }
+  if (parts.length) {
+    setStatus(`Segment ${chunkIndex + 1}/${totalChunks} : ${parts.join(" · ")}.`, true);
+  }
+  if (
+    Number.isFinite(expectedSeconds) &&
+    Number.isFinite(usageSeconds) &&
+    usageSeconds + PROMPT_AUDIO_SECONDS_TOLERANCE < expectedSeconds
+  ) {
+    setStatus(
+      `Segment ${chunkIndex + 1}/${totalChunks} : possible coupure (audio traite ${Math.round(
+        usageSeconds,
+      )} s pour ${Math.round(expectedSeconds)} s attendues).`,
+      true,
+    );
+  }
+  if (
+    Number.isFinite(expectedSeconds) &&
+    Number.isFinite(maxEndSeconds) &&
+    maxEndSeconds + SEGMENT_END_SECONDS_TOLERANCE < expectedSeconds
+  ) {
+    setStatus(
+      `Segment ${chunkIndex + 1}/${totalChunks} : timestamps s'arretent vers ${Math.round(
+        maxEndSeconds,
+      )} s pour ${Math.round(expectedSeconds)} s attendues.`,
+      true,
+    );
+  }
 }
 
 function formatHistoryDate(timestamp) {
@@ -217,122 +295,6 @@ function getRetryDelayMs(attempt, response) {
   const retryAfter = response ? parseRetryAfterMs(response) : null;
   const delay = retryAfter != null ? Math.max(retryAfter, jitter) : jitter;
   return Math.round(delay);
-}
-
-function isEventStreamResponse(response) {
-  const contentType = response.headers.get("content-type") || "";
-  return contentType.toLowerCase().includes("text/event-stream");
-}
-
-function buildTranscriptFromSegments(segments) {
-  if (!Array.isArray(segments) || !segments.length) return "";
-  return segments
-    .map((segment) => (segment?.text || "").trim())
-    .filter(Boolean)
-    .join("\n");
-}
-
-async function readTranscriptionStream(response, signal) {
-  if (!response.body) {
-    throw new Error("Flux de transcription indisponible.");
-  }
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder("utf-8");
-  let buffer = "";
-  let currentEvent = "";
-  let dataLines = [];
-  const textParts = [];
-  const segments = [];
-  let donePayload = null;
-
-  const flushEvent = () => {
-    const raw = dataLines.join("\n").trim();
-    dataLines = [];
-    const eventName = currentEvent.trim();
-    currentEvent = "";
-    if (!raw) return;
-    if (raw === "[DONE]") return;
-
-    let payload;
-    try {
-      payload = JSON.parse(raw);
-    } catch (error) {
-      return;
-    }
-
-    let eventType = eventName;
-    let data = payload;
-    if (payload && typeof payload === "object") {
-      if (payload.event && payload.data) {
-        eventType = payload.event;
-        data = payload.data;
-      } else if (!eventType && payload.type) {
-        eventType = payload.type;
-      }
-    }
-
-    if (eventType === "transcription.text.delta") {
-      if (typeof data?.text === "string") {
-        textParts.push(data.text);
-      }
-      return;
-    }
-    if (eventType === "transcription.segment") {
-      if (data && typeof data === "object") {
-        segments.push(data);
-      }
-      return;
-    }
-    if (eventType === "transcription.done") {
-      donePayload = data;
-    }
-  };
-
-  try {
-    while (true) {
-      throwIfAborted(signal);
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split(/\r?\n/);
-      buffer = lines.pop() || "";
-      for (const line of lines) {
-        if (line.startsWith("event:")) {
-          currentEvent = line.slice("event:".length).trim();
-          continue;
-        }
-        if (line.startsWith("data:")) {
-          dataLines.push(line.slice("data:".length).trim());
-          continue;
-        }
-        if (!line.trim()) {
-          flushEvent();
-        }
-      }
-    }
-    if (buffer.trim()) {
-      dataLines.push(buffer.trim());
-    }
-    flushEvent();
-  } finally {
-    reader.releaseLock();
-  }
-
-  if (donePayload && typeof donePayload === "object") {
-    if (!donePayload.segments?.length && segments.length) {
-      donePayload.segments = segments;
-    }
-    if (!donePayload.text) {
-      donePayload.text = buildTranscriptFromSegments(donePayload.segments) || textParts.join("");
-    }
-    return donePayload;
-  }
-
-  const fallbackText = textParts.join("");
-  if (!fallbackText) {
-    throw new Error("Flux de transcription incomplet.");
-  }
-  return { text: fallbackText, segments };
 }
 
 function normalizeForMatch(value) {
@@ -490,6 +452,25 @@ function setProcessing(isProcessing) {
   elements.transcribeBtn.disabled = isProcessing || !hasFile;
   if (elements.cancelBtn) {
     elements.cancelBtn.disabled = !isProcessing;
+  }
+}
+
+function setFfmpegEnabled(enabled, options = {}) {
+  const { silent = false } = options;
+  state.ffmpegEnabled = Boolean(enabled);
+  if (elements.ffmpegToggle) {
+    elements.ffmpegToggle.checked = state.ffmpegEnabled;
+  }
+  state.prepared = null;
+  if (!silent && state.file) {
+    setStatus(
+      state.ffmpegEnabled
+        ? "Découpage FFmpeg activé."
+        : "Découpage FFmpeg désactivé : envoi du fichier complet.",
+    );
+  }
+  if (state.file && !state.processing) {
+    void analyzeFile(state.file);
   }
 }
 
@@ -1364,6 +1345,7 @@ async function ffmpegSegmentByDuration(file, durationSeconds, options = {}) {
         extension: inputExtension,
         startSeconds: segment.startSeconds,
         endSeconds: segment.endSeconds,
+        durationSeconds: segmentDuration,
       });
     }
   } finally {
@@ -1387,7 +1369,7 @@ async function ffmpegSegmentByDuration(file, durationSeconds, options = {}) {
 }
 
 async function prepareFile(file, options = {}) {
-  const { signal } = options;
+  const { signal, useFfmpeg = true } = options;
   throwIfAborted(signal);
   const duration = await getAudioDuration(file);
   if (!Number.isFinite(duration) || duration <= 0) {
@@ -1395,10 +1377,16 @@ async function prepareFile(file, options = {}) {
   }
   throwIfAborted(signal);
 
-  if (duration <= SEGMENT_TARGET_SECONDS) {
-    setStatus("Fichier accepté sans découpage.");
+  if (!useFfmpeg || duration <= SEGMENT_TARGET_SECONDS) {
+    if (duration <= SEGMENT_TARGET_SECONDS) {
+      setStatus("Fichier accepté sans découpage.");
+    } else if (!useFfmpeg) {
+      setStatus(
+        `FFmpeg désactivé : envoi du fichier complet malgré ${formatDuration(duration)}.`,
+      );
+    }
     return {
-      chunks: [{ blob: file, index: 1, isOriginal: true }],
+      chunks: [{ blob: file, index: 1, isOriginal: true, durationSeconds: duration }],
       totalSize: file.size,
       usedOriginal: true,
     };
@@ -1418,9 +1406,12 @@ async function analyzeFile(file) {
   state.abortController = controller;
 
   try {
-    const prepared = await prepareFile(file, { signal: controller.signal });
+    const prepared = await prepareFile(file, {
+      signal: controller.signal,
+      useFfmpeg: state.ffmpegEnabled,
+    });
     if (state.file !== file) return;
-    state.prepared = { ...prepared, file };
+    state.prepared = { ...prepared, file, ffmpegEnabled: state.ffmpegEnabled };
     setSegments(prepared.chunks, file);
     if (!prepared.usedOriginal) {
       setStatus(`Taille finale : ${formatBytes(prepared.totalSize)}.`);
@@ -1458,7 +1449,6 @@ async function transcribeChunkWithRetry({
   signal,
 }) {
   const filename = buildSegmentFilename(baseName, file, chunk);
-  const wantsStream = USE_STREAMING_TRANSCRIPTION;
   for (let attempt = 1; attempt <= MAX_TRANSCRIBE_ATTEMPTS; attempt += 1) {
     throwIfAborted(signal);
     const attemptLabel =
@@ -1471,21 +1461,19 @@ async function transcribeChunkWithRetry({
     if (language) {
       formData.append("language", language);
     }
-    if (wantsStream) {
-      formData.append("stream", "true");
+    if (timestampDiagnosticsActive) {
+      TIMESTAMP_GRANULARITIES.forEach((granularity) => {
+        formData.append("timestamp_granularities", granularity);
+      });
     }
 
     let response;
     try {
-      const headers = {
-        Authorization: `Bearer ${apiKey}`,
-      };
-      if (wantsStream) {
-        headers.Accept = "text/event-stream";
-      }
       response = await fetch(PROVIDER_CONFIG.endpoint, {
         method: "POST",
-        headers,
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
         body: formData,
         signal,
       });
@@ -1516,14 +1504,22 @@ async function transcribeChunkWithRetry({
         continue;
       }
       const errorText = await response.text();
+      if (
+        timestampDiagnosticsActive &&
+        response.status === 400 &&
+        /timestamp/i.test(errorText)
+      ) {
+        timestampDiagnosticsActive = false;
+        setStatus("Timestamp API refuse. Relance sans timestamps.", true);
+        if (attempt < MAX_TRANSCRIBE_ATTEMPTS) {
+          continue;
+        }
+      }
       const parsedMessage = extractApiErrorMessage(errorText);
       const message = parsedMessage || errorText || `Erreur API ${PROVIDER_CONFIG.label}.`;
       throw new Error(message.trim());
     }
 
-    if (wantsStream && isEventStreamResponse(response)) {
-      return readTranscriptionStream(response, signal);
-    }
     return response.json();
   }
   throw new Error("Echec transcription segment.");
@@ -1550,6 +1546,7 @@ async function transcribe() {
   elements.transcribeBtn.textContent = "Traitement...";
   resetTranscriptionState();
   clearStatus();
+  timestampDiagnosticsActive = TIMESTAMP_DIAGNOSTICS_ENABLED;
   setStatus("Analyse du fichier audio…");
 
   try {
@@ -1558,10 +1555,15 @@ async function transcribe() {
     state.abortController = controller;
     const { signal } = controller;
 
-    const cached = state.prepared && state.prepared.file === file;
-    const prepared = cached ? state.prepared : await prepareFile(file, { signal });
+    const cached =
+      state.prepared &&
+      state.prepared.file === file &&
+      state.prepared.ffmpegEnabled === state.ffmpegEnabled;
+    const prepared = cached
+      ? state.prepared
+      : await prepareFile(file, { signal, useFfmpeg: state.ffmpegEnabled });
     if (!cached) {
-      state.prepared = { ...prepared, file };
+      state.prepared = { ...prepared, file, ffmpegEnabled: state.ffmpegEnabled };
     }
     const { chunks, totalSize, usedOriginal } = prepared;
     if (!state.segments.length) {
@@ -1610,8 +1612,18 @@ async function transcribe() {
           })
             .then((data) => {
               if (finished) return;
-              const chunkText = (data.text || "").trim();
+              const rawText = typeof data.text === "string" ? data.text : "";
+              const segmentsText = buildTranscriptFromSegments(data.segments);
+              const chunkText = (
+                segmentsText.length > rawText.length ? segmentsText : rawText
+              ).trim();
               transcriptParts[chunkIndex] = chunkText;
+              logTranscriptionCoverage({
+                chunkIndex,
+                totalChunks,
+                chunk,
+                data,
+              });
               applyUsage(data.usage);
               completed += 1;
               setProgressStatus(
@@ -1697,6 +1709,13 @@ elements.fileInput.addEventListener("change", (event) => {
   const file = event.target.files?.[0] || null;
   setFile(file);
 });
+
+if (elements.ffmpegToggle) {
+  elements.ffmpegToggle.addEventListener("change", (event) => {
+    setFfmpegEnabled(event.target.checked);
+  });
+  setFfmpegEnabled(elements.ffmpegToggle.checked, { silent: true });
+}
 
 elements.audioPreview.addEventListener("loadedmetadata", () => {
   const duration = elements.audioPreview.duration;

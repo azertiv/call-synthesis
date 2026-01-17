@@ -236,6 +236,13 @@
         <div class="file-meta" id="fileMeta">
           <span>Aucun fichier.</span>
         </div>
+        <div class="field">
+          <label class="toggle">
+            <input type="checkbox" id="ffmpegToggle" checked />
+            <span>Découper avec FFmpeg si le fichier est long</span>
+          </label>
+          <div class="hint">Désactivé : le fichier complet est envoyé tel quel.</div>
+        </div>
         <audio id="audioPreview" controls hidden></audio>
         <div class="row">
           <button class="primary" id="transcribeBtn" disabled>Transcrire</button>

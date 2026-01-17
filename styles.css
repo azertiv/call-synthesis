@@ -21,6 +21,9 @@
   --orbit-cool: rgba(31, 157, 143, 0.25);
   --shadow: 0 24px 60px rgba(18, 20, 27, 0.12);
   --radius: 22px;
+  --page-gutter: clamp(16px, 2.4vw, 28px);
+  --layout-max: 980px;
+  --layout-shift: clamp(10px, 1.8vw, 20px);
   color-scheme: light;
 }
 
@@ -349,13 +352,14 @@ audio {
 }
 
 .workspace {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 0 24px 64px;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0 var(--page-gutter) 64px 0;
   display: grid;
   grid-template-columns: var(--history-panel-width, clamp(240px, 26vw, 320px)) minmax(0, 1fr);
   row-gap: 24px;
-  column-gap: 24px;
+  column-gap: clamp(20px, 2.4vw, 32px);
   align-items: start;
   transition: grid-template-columns 0.25s ease;
 }
@@ -363,6 +367,7 @@ audio {
 body.history-collapsed .workspace {
   --history-panel-width: 0px;
   column-gap: 0;
+  padding-left: var(--page-gutter);
 }
 
 .layout {
@@ -371,6 +376,14 @@ body.history-collapsed .workspace {
   gap: 24px;
   align-items: start;
   min-width: 0;
+  max-width: var(--layout-max);
+  width: 100%;
+  margin: 0 auto;
+  transition: transform 0.25s ease;
+}
+
+body:not(.history-collapsed) .layout {
+  transform: translateX(var(--layout-shift));
 }
 
 .history-panel {
@@ -1061,10 +1074,15 @@ button:disabled {
 @media (max-width: 980px) {
   .workspace {
     grid-template-columns: 1fr;
+    padding: 0 var(--page-gutter) 64px;
   }
 
   .layout {
     grid-template-columns: 1fr;
+  }
+
+  body:not(.history-collapsed) .layout {
+    transform: none;
   }
 
   .history-panel {
