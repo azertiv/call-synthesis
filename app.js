@@ -3,6 +3,10 @@ const SAFE_CHUNK_BYTES = 24 * 1024 * 1024;
 const TARGET_SAMPLE_RATE = 16000;
 const WAV_HEADER_BYTES = 44;
 const COPY_SAFETY = 0.85;
+const MAX_PARALLEL_REQUESTS = 3;
+const MAX_TRANSCRIBE_ATTEMPTS = 3;
+const RETRY_BACKOFF_BASE_MS = 700;
+const RETRY_BACKOFF_MAX_MS = 8000;
 const SEGMENT_TIME_MARGIN = 1.03;
 const RETRY_SEGMENT_MINUTES = [15, 10, 8];
 const MAX_SEGMENT_MINUTES_BY_MODEL = {
@@ -15,6 +19,7 @@ const FFMPEG_CORE_FILE = "ffmpeg-core.js";
 const FFMPEG_WASM_FILE = "ffmpeg-core.wasm";
 const STORAGE_KEY = "callSynthesis.apiKey";
 const STORAGE_REMEMBER = "callSynthesis.remember";
+const THEME_STORAGE = "callSynthesis.theme";
 const PRICE_PER_MILLION = 1_000_000;
 const MODEL_PRICING = {
   "gpt-4o-mini-transcribe": {
@@ -47,6 +52,7 @@ const elements = {
   audioPreview: document.getElementById("audioPreview"),
   transcribeBtn: document.getElementById("transcribeBtn"),
   testBtn: document.getElementById("testBtn"),
+  cancelBtn: document.getElementById("cancelBtn"),
   statusLog: document.getElementById("statusLog"),
   transcript: document.getElementById("transcript"),
   copyBtn: document.getElementById("copyBtn"),
@@ -60,6 +66,7 @@ const elements = {
   priceHint: document.getElementById("priceHint"),
   segmentsList: document.getElementById("segmentsList"),
   downloadSegmentsBtn: document.getElementById("downloadSegmentsBtn"),
+  themeButtons: document.querySelectorAll("[data-theme-choice]"),
 };
 
 const state = {
@@ -70,6 +77,8 @@ const state = {
   durationSeconds: null,
   activeModel: null,
   processing: false,
+  abortController: null,
+  cancelRequested: false,
   segments: [],
   segmentUrls: [],
 };
@@ -103,6 +112,106 @@ function formatDuration(seconds) {
   return `${hours} h ${minutes} min`;
 }
 
+function createAbortError() {
+  const error = new Error("Transcription annulee.");
+  error.name = "AbortError";
+  return error;
+}
+
+function isAbortError(error) {
+  return error?.name === "AbortError";
+}
+
+function throwIfAborted(signal) {
+  if (signal?.aborted) {
+    throw createAbortError();
+  }
+}
+
+function sleep(ms, signal) {
+  if (!Number.isFinite(ms) || ms <= 0) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    let timer = null;
+    const onAbort = () => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      if (signal) {
+        signal.removeEventListener("abort", onAbort);
+      }
+      reject(createAbortError());
+    };
+    timer = setTimeout(() => {
+      if (signal) {
+        signal.removeEventListener("abort", onAbort);
+      }
+      resolve();
+    }, ms);
+    if (!signal) return;
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function shouldRetryStatus(status) {
+  return status === 408 || status === 409 || status === 429 || (status >= 500 && status <= 599);
+}
+
+function parseRetryAfterMs(response) {
+  const header = response.headers.get("Retry-After");
+  if (!header) return null;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds)) {
+    return Math.max(0, seconds * 1000);
+  }
+  const dateMs = Date.parse(header);
+  if (!Number.isNaN(dateMs)) {
+    return Math.max(0, dateMs - Date.now());
+  }
+  return null;
+}
+
+function getRetryDelayMs(attempt, response) {
+  const base = Math.min(
+    RETRY_BACKOFF_MAX_MS,
+    RETRY_BACKOFF_BASE_MS * 2 ** Math.max(0, attempt - 1),
+  );
+  const jitter = base * (0.8 + Math.random() * 0.4);
+  const retryAfter = response ? parseRetryAfterMs(response) : null;
+  const delay = retryAfter != null ? Math.max(retryAfter, jitter) : jitter;
+  return Math.round(delay);
+}
+
+function buildProgressiveTranscript(parts, total, isFinal) {
+  if (isFinal) {
+    const cleaned = parts.map((part) => (part || "").trim()).filter(Boolean);
+    return cleaned.join("\n\n");
+  }
+  return parts
+    .map((part, index) => {
+      const label = `[Segment ${index + 1}/${total}]`;
+      const trimmed = (part || "").trim();
+      if (trimmed) {
+        return `${label}\n${trimmed}`;
+      }
+      return `${label} en attente`;
+    })
+    .join("\n\n");
+}
+
+function updateTranscriptProgress(parts, total, isFinal) {
+  const text = buildProgressiveTranscript(parts, total, isFinal);
+  if (!isFinal && !text) {
+    elements.transcript.value = "Transcription en cours...";
+    return;
+  }
+  elements.transcript.value = text || "(Aucun texte retourne)";
+}
+
 function setStatus(message, isIdle = false) {
   const line = document.createElement("div");
   line.className = `status-line${isIdle ? " idle" : ""}`;
@@ -132,6 +241,9 @@ function setProcessing(isProcessing) {
   elements.transcribeBtn.disabled = isProcessing || !hasFile;
   if (elements.testBtn) {
     elements.testBtn.disabled = isProcessing || !hasFile;
+  }
+  if (elements.cancelBtn) {
+    elements.cancelBtn.disabled = !isProcessing;
   }
 }
 
@@ -276,6 +388,25 @@ function updateUsageHint() {
   elements.usageHint.textContent = state.usageSeen
     ? "Usage fourni par l'API."
     : "L'estimation se base sur le texte si l'API ne renvoie pas l'usage.";
+}
+
+function applyUsage(usage) {
+  if (!usage) return;
+  const inputTokens = Number(usage.input_tokens ?? 0);
+  const outputTokens = Number(usage.output_tokens ?? 0);
+  const totalTokens = Number(usage.total_tokens ?? inputTokens + outputTokens);
+  state.usage.input += inputTokens;
+  state.usage.output += outputTokens;
+  state.usage.total += totalTokens;
+  state.usageSeen = true;
+  setTokens({
+    input: state.usage.input || "—",
+    output: state.usage.output || "—",
+    total: state.usage.total || "—",
+    estimate: "—",
+  });
+  updateUsageHint();
+  updatePriceDisplay();
 }
 
 function getMaxSegmentDurationSeconds(model) {
@@ -701,12 +832,15 @@ async function clearFfmpegSegments(ffmpeg, prefix) {
 }
 
 async function ffmpegCopySegment(file, options = {}) {
+  const { maxDurationSeconds, signal } = options;
+  throwIfAborted(signal);
   setStatus("FFmpeg : découpe rapide sans ré-encodage.");
   const { instance: ffmpeg } = await loadFfmpeg();
   const inputExtension = getFileExtension(file);
   const inputName = `input.${inputExtension}`;
   await ffmpeg.writeFile(inputName, await toUint8Array(file));
 
+  throwIfAborted(signal);
   const probedDuration = await probeDurationWithFfmpeg(ffmpeg, inputName);
   const duration = probedDuration ?? await getAudioDuration(file);
   if (!Number.isFinite(duration) || duration <= 0) {
@@ -733,7 +867,6 @@ async function ffmpegCopySegment(file, options = {}) {
   );
   const sizeBasedCount = Math.ceil(file.size / (SAFE_CHUNK_BYTES * COPY_SAFETY));
   const timeBasedCount = Math.max(1, Math.ceil(duration / maxSegmentSeconds));
-  const maxDurationSeconds = options.maxDurationSeconds;
   const durationBasedCount = maxDurationSeconds
     ? Math.ceil(duration / (maxDurationSeconds / SEGMENT_TIME_MARGIN))
     : 1;
@@ -777,6 +910,7 @@ async function ffmpegCopySegment(file, options = {}) {
     }
   }
 
+  throwIfAborted(signal);
   const mimeType = mimeFromExtension(outputExtension);
   const chunks = await readFfmpegSegments(ffmpeg, outputPrefix, outputExtension, mimeType);
   const totalSize = chunks.reduce((sum, chunk) => sum + chunk.blob.size, 0);
@@ -802,7 +936,8 @@ async function ffmpegCopySegment(file, options = {}) {
   };
 }
 
-async function downsampleAndChunk(file) {
+async function downsampleAndChunk(file, signal) {
+  throwIfAborted(signal);
   setStatus("Fichier > 25 Mo : rééchantillonnage 16kHz mono en cours…");
   const arrayBuffer = await file.arrayBuffer();
   const audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -814,6 +949,7 @@ async function downsampleAndChunk(file) {
       audioContext.close();
     }
   }
+  throwIfAborted(signal);
 
   const frameCount = Math.ceil(decoded.duration * TARGET_SAMPLE_RATE);
   const offline = new OfflineAudioContext(1, frameCount, TARGET_SAMPLE_RATE);
@@ -829,6 +965,7 @@ async function downsampleAndChunk(file) {
   let offset = 0;
   let index = 1;
   while (offset < samples.length) {
+    throwIfAborted(signal);
     const end = Math.min(offset + maxSamplesPerChunk, samples.length);
     const slice = samples.subarray(offset, end);
     const wavBuffer = encodeWav(slice, rendered.sampleRate);
@@ -845,7 +982,8 @@ async function downsampleAndChunk(file) {
 }
 
 async function prepareFile(file, model, options = {}) {
-  const overrideSeconds = options.maxDurationOverrideSeconds;
+  const { maxDurationOverrideSeconds: overrideSeconds, signal } = options;
+  throwIfAborted(signal);
   const maxDurationSeconds =
     Number.isFinite(overrideSeconds) && overrideSeconds > 0
       ? overrideSeconds
@@ -855,6 +993,7 @@ async function prepareFile(file, model, options = {}) {
     const duration = await getAudioDuration(file);
     needsDurationSplit = Number.isFinite(duration) && duration > maxDurationSeconds;
   }
+  throwIfAborted(signal);
 
   if (file.size <= MAX_FILE_BYTES && !needsDurationSplit) {
     setStatus("Fichier accepté sans découpage.");
@@ -866,7 +1005,7 @@ async function prepareFile(file, model, options = {}) {
   }
 
   try {
-    return await ffmpegCopySegment(file, { maxDurationSeconds });
+    return await ffmpegCopySegment(file, { maxDurationSeconds, signal });
   } catch (error) {
     setStatus("Découpe FFmpeg échouée, bascule en WAV.");
     const message = error instanceof Error ? error.message : String(error);
@@ -874,10 +1013,97 @@ async function prepareFile(file, model, options = {}) {
   }
 
   return {
-    ...(await downsampleAndChunk(file)),
+    ...(await downsampleAndChunk(file, signal)),
     usedOriginal: false,
     usedCompression: false,
   };
+}
+
+function cancelTranscription() {
+  if (!state.processing || !state.abortController) return;
+  state.cancelRequested = true;
+  state.abortController.abort();
+  setStatus("Annulation demandee.");
+}
+
+async function transcribeChunkWithRetry({
+  apiKey,
+  model,
+  language,
+  chunk,
+  chunkIndex,
+  totalChunks,
+  file,
+  baseName,
+  signal,
+}) {
+  const filename = buildSegmentFilename(baseName, file, chunk);
+  for (let attempt = 1; attempt <= MAX_TRANSCRIBE_ATTEMPTS; attempt += 1) {
+    throwIfAborted(signal);
+    const attemptLabel =
+      MAX_TRANSCRIBE_ATTEMPTS > 1 ? ` (tentative ${attempt}/${MAX_TRANSCRIBE_ATTEMPTS})` : "";
+    setStatus(`Transcription segment ${chunkIndex + 1}/${totalChunks}${attemptLabel}...`);
+
+    const formData = new FormData();
+    formData.append("file", chunk.blob, filename);
+    formData.append("model", model);
+    formData.append("response_format", resolveResponseFormat(model));
+    if (language) {
+      formData.append("language", language);
+    }
+
+    let response;
+    try {
+      response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: formData,
+        signal,
+      });
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw error;
+      }
+      if (attempt < MAX_TRANSCRIBE_ATTEMPTS) {
+        const delayMs = getRetryDelayMs(attempt);
+        const delaySeconds = Math.round(delayMs / 100) / 10;
+        setStatus(
+          `Segment ${chunkIndex + 1}/${totalChunks} : erreur reseau, nouvelle tentative dans ${delaySeconds}s.`,
+        );
+        await sleep(delayMs, signal);
+        continue;
+      }
+      throw error;
+    }
+
+    if (!response.ok) {
+      if (shouldRetryStatus(response.status) && attempt < MAX_TRANSCRIBE_ATTEMPTS) {
+        const delayMs = getRetryDelayMs(attempt, response);
+        const delaySeconds = Math.round(delayMs / 100) / 10;
+        setStatus(
+          `Segment ${chunkIndex + 1}/${totalChunks} : erreur ${response.status}, nouvelle tentative dans ${delaySeconds}s.`,
+        );
+        await sleep(delayMs, signal);
+        continue;
+      }
+      const errorText = await response.text();
+      let message = errorText || "Erreur API OpenAI.";
+      try {
+        const parsed = JSON.parse(errorText);
+        if (parsed.error?.message) {
+          message = parsed.error.message;
+        }
+      } catch (err) {
+        // Ignore JSON parse errors.
+      }
+      throw new Error(message);
+    }
+
+    return response.json();
+  }
+  throw new Error("Echec transcription segment.");
 }
 
 async function transcribe() {
@@ -898,6 +1124,7 @@ async function transcribe() {
   }
 
   state.activeModel = model;
+  state.cancelRequested = false;
   setProcessing(true);
   elements.transcribeBtn.textContent = "Traitement...";
   resetTranscriptionState();
@@ -919,78 +1146,100 @@ async function transcribe() {
       }
 
       try {
+        const controller = new AbortController();
+        state.abortController = controller;
+        const { signal } = controller;
+
         const { chunks, totalSize, usedOriginal } = await prepareFile(file, model, {
           maxDurationOverrideSeconds: overrideSeconds,
+          signal,
         });
         setSegments(chunks, file);
         if (!usedOriginal) {
           setStatus(`Taille finale : ${formatBytes(totalSize)}.`);
         }
 
-        const transcriptParts = [];
-        for (let i = 0; i < chunks.length; i += 1) {
-          const chunk = chunks[i];
-          setStatus(`Transcription segment ${i + 1}/${chunks.length}…`);
-
-          const formData = new FormData();
-          const extension = chunk.extension || "wav";
-          const filename = chunk.isOriginal && file.name
-            ? file.name
-            : `${baseName}-part-${String(chunk.index).padStart(2, "0")}.${extension}`;
-          formData.append("file", chunk.blob, filename);
-          formData.append("model", model);
-          formData.append("response_format", resolveResponseFormat(model));
-          if (language) {
-            formData.append("language", language);
-          }
-
-          const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${apiKey}`,
-            },
-            body: formData,
-          });
-
-          if (!response.ok) {
-            const errorText = await response.text();
-            let message = errorText || "Erreur API OpenAI.";
-            try {
-              const parsed = JSON.parse(errorText);
-              if (parsed.error?.message) {
-                message = parsed.error.message;
-              }
-            } catch (err) {
-              // Ignore JSON parse errors.
-            }
-            throw new Error(message);
-          }
-
-          const data = await response.json();
-          const chunkText = (data.text || "").trim();
-          transcriptParts.push(chunkText);
-
-          if (data.usage) {
-            const inputTokens = Number(data.usage.input_tokens ?? 0);
-            const outputTokens = Number(data.usage.output_tokens ?? 0);
-            const totalTokens = Number(data.usage.total_tokens ?? inputTokens + outputTokens);
-            state.usage.input += inputTokens;
-            state.usage.output += outputTokens;
-            state.usage.total += totalTokens;
-            state.usageSeen = true;
-            setTokens({
-              input: state.usage.input || "—",
-              output: state.usage.output || "—",
-              total: state.usage.total || "—",
-              estimate: "—",
-            });
-            updateUsageHint();
-            updatePriceDisplay();
-          }
+        const totalChunks = chunks.length;
+        if (!totalChunks) {
+          throw new Error("Aucun segment a transcrire.");
         }
+        const transcriptParts = new Array(totalChunks).fill("");
+        updateTranscriptProgress(transcriptParts, totalChunks, false);
+        setProgressStatus(`Transcription : 0/${totalChunks} segment(s) termines.`);
 
-        const fullTranscript = transcriptParts.filter(Boolean).join("\n\n");
-        elements.transcript.value = fullTranscript || "(Aucun texte retourné)";
+        const parallelLimit = Math.max(1, Math.min(MAX_PARALLEL_REQUESTS, totalChunks));
+        let completed = 0;
+        let active = 0;
+        let nextIndex = 0;
+        let finished = false;
+
+        await new Promise((resolve, reject) => {
+          const launchNext = () => {
+            if (finished) return;
+            if (signal.aborted) {
+              finished = true;
+              reject(createAbortError());
+              return;
+            }
+            while (active < parallelLimit && nextIndex < totalChunks) {
+              const chunkIndex = nextIndex;
+              nextIndex += 1;
+              const chunk = chunks[chunkIndex];
+              active += 1;
+              transcribeChunkWithRetry({
+                apiKey,
+                model,
+                language,
+                chunk,
+                chunkIndex,
+                totalChunks,
+                file,
+                baseName,
+                signal,
+              })
+                .then((data) => {
+                  if (finished) return;
+                  const chunkText = (data.text || "").trim();
+                  transcriptParts[chunkIndex] = chunkText;
+                  applyUsage(data.usage);
+                  completed += 1;
+                  updateTranscriptProgress(transcriptParts, totalChunks, false);
+                  setProgressStatus(
+                    `Transcription : ${completed}/${totalChunks} segment(s) termines.`,
+                  );
+                  active -= 1;
+                  if (completed >= totalChunks) {
+                    finished = true;
+                    resolve();
+                    return;
+                  }
+                  launchNext();
+                })
+                .catch((error) => {
+                  if (finished) return;
+                  active -= 1;
+                  if (!isAbortError(error)) {
+                    finished = true;
+                    controller.abort();
+                    reject(error);
+                    return;
+                  }
+                  if (signal.aborted) {
+                    finished = true;
+                    reject(error);
+                  }
+                });
+            }
+          };
+          launchNext();
+        });
+
+        const fullTranscript = buildProgressiveTranscript(
+          transcriptParts,
+          totalChunks,
+          true,
+        );
+        elements.transcript.value = fullTranscript || "(Aucun texte retourne)";
         const estimatedTokens = estimateTokens(fullTranscript);
         if (!state.usageSeen) {
           setTokens({
@@ -1003,24 +1252,40 @@ async function transcribe() {
           elements.tokensEstimate.textContent = estimatedTokens || "—";
         }
         updatePriceDisplay();
-        setStatus("Transcription terminée ✅");
+        setStatus("Transcription terminee.");
         return;
       } catch (error) {
+        if (state.abortController) {
+          state.abortController = null;
+        }
+        if (state.cancelRequested || isAbortError(error)) {
+          throw error;
+        }
         const message = error instanceof Error ? error.message : String(error);
         if (isTokenLimitError(message) && attempt < retrySteps.length - 1) {
-          setStatus("Limite de tokens atteinte pour ce modèle.");
+          setStatus("Limite de tokens atteinte pour ce modele.");
           continue;
         }
         throw error;
+      } finally {
+        if (state.abortController && state.abortController.signal.aborted) {
+          state.abortController = null;
+        }
       }
     }
   } catch (error) {
-    setStatus("Erreur pendant la transcription.");
-    const message = error instanceof Error ? error.message : String(error);
-    setStatus(message);
+    if (state.cancelRequested || isAbortError(error)) {
+      setStatus("Transcription annulee.");
+    } else {
+      setStatus("Erreur pendant la transcription.");
+      const message = error instanceof Error ? error.message : String(error);
+      setStatus(message);
+    }
   } finally {
+    state.cancelRequested = false;
     setProcessing(false);
     elements.transcribeBtn.textContent = "Transcrire le call";
+    state.abortController = null;
   }
 }
 
@@ -1096,6 +1361,12 @@ elements.transcribeBtn.addEventListener("click", () => {
   transcribe();
 });
 
+if (elements.cancelBtn) {
+  elements.cancelBtn.addEventListener("click", () => {
+    cancelTranscription();
+  });
+}
+
 if (elements.testBtn) {
   elements.testBtn.addEventListener("click", () => {
     testSegmentation();
@@ -1142,6 +1413,47 @@ elements.downloadBtn.addEventListener("click", () => {
   URL.revokeObjectURL(url);
 });
 
+function normalizeThemeChoice(choice) {
+  if (choice === "light" || choice === "dark" || choice === "system") {
+    return choice;
+  }
+  return "system";
+}
+
+function applyThemeChoice(choice) {
+  const normalized = normalizeThemeChoice(choice);
+  if (normalized === "system") {
+    document.documentElement.removeAttribute("data-theme");
+  } else {
+    document.documentElement.setAttribute("data-theme", normalized);
+  }
+  if (elements.themeButtons?.length) {
+    elements.themeButtons.forEach((button) => {
+      const isActive = button.dataset.themeChoice === normalized;
+      button.setAttribute("aria-pressed", isActive ? "true" : "false");
+    });
+  }
+}
+
+function setThemeChoice(choice) {
+  const normalized = normalizeThemeChoice(choice);
+  applyThemeChoice(normalized);
+  localStorage.setItem(THEME_STORAGE, normalized);
+}
+
+function loadThemeChoice() {
+  const stored = localStorage.getItem(THEME_STORAGE);
+  applyThemeChoice(stored || "system");
+}
+
+if (elements.themeButtons?.length) {
+  elements.themeButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      setThemeChoice(button.dataset.themeChoice);
+    });
+  });
+}
+
 elements.rememberKey.addEventListener("change", (event) => {
   const remember = event.target.checked;
   if (remember) {
@@ -1182,6 +1494,7 @@ function loadStoredKey() {
 }
 
 loadStoredKey();
+loadThemeChoice();
 updateModelPriceHint();
 updatePriceDisplay();
 clearStatus();
