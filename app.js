@@ -23,7 +23,6 @@ const THEME_STORAGE = "callSynthesis.theme";
 const HISTORY_STORAGE_KEY = "callSynthesis.history";
 const HISTORY_ENABLED_KEY = "callSynthesis.historyEnabled";
 const HISTORY_LIMIT = 30;
-const HISTORY_PREVIEW_CHARS = 160;
 const OVERLAP_MIN_WORDS = 6;
 const OVERLAP_MAX_WORDS = 80;
 const PDF_FONT_FAMILY = "times";
@@ -39,6 +38,8 @@ const ICONS = {
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6"/><path d="M9 7V5h6v2" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6"/><path d="M7 7l1 12h8l1-12" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"/><path d="M10 11v6" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6"/><path d="M14 11v6" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6"/></svg>',
   copy:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="5" y="5" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
+  clock:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6"/></svg>',
 };
 
 const elements = {
@@ -55,7 +56,6 @@ const elements = {
   fileInput: document.getElementById("fileInput"),
   fileMeta: document.getElementById("fileMeta"),
   audioPreview: document.getElementById("audioPreview"),
-  changeFileBtn: document.getElementById("changeFileBtn"),
   transcribeBtn: document.getElementById("transcribeBtn"),
   cancelBtn: document.getElementById("cancelBtn"),
   statusLog: document.getElementById("statusLog"),
@@ -75,9 +75,6 @@ const elements = {
   summaryTitleInput: document.getElementById("summaryTitleInput"),
   summaryModel: document.getElementById("summaryModel"),
   summaryReasoning: document.getElementById("summaryReasoning"),
-  heroStage: document.getElementById("heroStage"),
-  heroBody: document.getElementById("heroBody"),
-  heroToggleBtn: document.getElementById("heroToggleBtn"),
   tokensInput: document.getElementById("tokensInput"),
   tokensOutput: document.getElementById("tokensOutput"),
   tokensTotal: document.getElementById("tokensTotal"),
@@ -119,7 +116,6 @@ const state = {
   historyEnabled: true,
   historyQuery: "",
   activeHistoryId: null,
-  heroCollapsed: false,
   summaryText: "",
   summaryTitle: "",
   summaryProcessing: false,
@@ -424,9 +420,6 @@ function setProcessing(isProcessing) {
   state.processing = isProcessing;
   const hasFile = Boolean(state.file);
   elements.transcribeBtn.disabled = isProcessing || !hasFile;
-  if (elements.changeFileBtn) {
-    elements.changeFileBtn.disabled = isProcessing;
-  }
   if (elements.cancelBtn) {
     elements.cancelBtn.disabled = !isProcessing;
   }
@@ -1222,25 +1215,31 @@ function clearSegments() {
   updateSegmentsCount();
 }
 
-function setHeroCollapsed(collapsed) {
-  state.heroCollapsed = Boolean(collapsed);
-  if (elements.heroStage) {
-    elements.heroStage.classList.toggle("is-collapsed", state.heroCollapsed);
+function setPanelCollapsed(panel, collapsed) {
+  if (!panel) return;
+  const isCollapsed = Boolean(collapsed);
+  panel.classList.toggle("is-collapsed", isCollapsed);
+  const body = panel.querySelector(".panel-body");
+  if (body) {
+    body.hidden = isCollapsed;
   }
-  if (elements.heroBody) {
-    elements.heroBody.hidden = state.heroCollapsed;
+  const toggle = panel.querySelector("[data-panel-toggle]");
+  if (toggle) {
+    const label = isCollapsed ? "Afficher la section" : "Masquer la section";
+    toggle.setAttribute("aria-expanded", isCollapsed ? "false" : "true");
+    toggle.setAttribute("aria-label", label);
+    toggle.title = label;
+    const labelNode = toggle.querySelector(".sr-only");
+    if (labelNode) {
+      labelNode.textContent = label;
+    }
   }
-  if (elements.heroToggleBtn) {
-    const hasFile = Boolean(state.file) || document.body.classList.contains("has-file");
-    elements.heroToggleBtn.hidden = !hasFile;
-    elements.heroToggleBtn.setAttribute(
-      "aria-expanded",
-      state.heroCollapsed ? "false" : "true",
-    );
-    elements.heroToggleBtn.textContent = state.heroCollapsed
-      ? "Afficher le chargeur"
-      : "Masquer le chargeur";
-  }
+}
+
+function setPanelCollapsedById(panelId, collapsed) {
+  if (!panelId) return;
+  const panel = document.querySelector(`.collapsible-panel[data-panel-id="${panelId}"]`);
+  setPanelCollapsed(panel, collapsed);
 }
 
 function loadHistoryEntries() {
@@ -1350,12 +1349,20 @@ function filterHistoryEntries(entries, query) {
   });
 }
 
-function getHistoryPreview(text) {
-  if (typeof text !== "string") return "";
-  const cleaned = text.replace(/\s+/g, " ").trim();
-  if (!cleaned) return "";
-  if (cleaned.length <= HISTORY_PREVIEW_CHARS) return cleaned;
-  return `${cleaned.slice(0, HISTORY_PREVIEW_CHARS)}...`;
+function buildHistoryMetaItem(label, iconSvg) {
+  const item = document.createElement("span");
+  item.className = "history-meta-item";
+  if (iconSvg) {
+    const icon = document.createElement("span");
+    icon.className = "history-meta-icon";
+    icon.innerHTML = iconSvg;
+    item.appendChild(icon);
+  }
+  const text = document.createElement("span");
+  text.className = "history-meta-text";
+  text.textContent = label;
+  item.appendChild(text);
+  return item;
 }
 
 function updateHistorySummary(filteredCount, totalCount, query) {
@@ -1454,33 +1461,22 @@ function renderHistory() {
 
     const metaRow = document.createElement("div");
     metaRow.className = "history-meta";
-    const metaParts = [];
-    if (entry.fileName) {
-      metaParts.push(entry.fileName);
-    }
+    const metaItems = [];
     if (Number.isFinite(entry.durationSeconds)) {
-      metaParts.push(`Durée ${formatDuration(entry.durationSeconds)}`);
+      metaItems.push(buildHistoryMetaItem(formatDuration(entry.durationSeconds), ICONS.clock));
     }
     if (entry.tokens?.total) {
-      metaParts.push(`Tokens ${entry.tokens.total}`);
+      metaItems.push(buildHistoryMetaItem(`Tokens ${entry.tokens.total}`));
     } else if (entry.tokens?.estimate) {
-      metaParts.push(`Tokens estimés ${entry.tokens.estimate}`);
+      metaItems.push(buildHistoryMetaItem(`Tokens estimés ${entry.tokens.estimate}`));
     }
     const dateLabel = formatHistoryDate(entry.createdAt);
     if (dateLabel) {
-      metaParts.push(dateLabel);
+      metaItems.push(buildHistoryMetaItem(dateLabel));
     }
-    metaParts.forEach((part) => {
-      const tag = document.createElement("span");
-      tag.className = "history-tag";
-      tag.textContent = part;
-      metaRow.appendChild(tag);
+    metaItems.forEach((part) => {
+      metaRow.appendChild(part);
     });
-
-    const previewText = getHistoryPreview(entry.text);
-    const preview = document.createElement("p");
-    preview.className = "history-preview";
-    preview.textContent = previewText;
 
     const actions = document.createElement("div");
     actions.className = "history-actions";
@@ -1535,11 +1531,8 @@ function renderHistory() {
     actions.appendChild(deleteBtn);
 
     item.appendChild(titleRow);
-    if (metaParts.length) {
+    if (metaItems.length) {
       item.appendChild(metaRow);
-    }
-    if (previewText) {
-      item.appendChild(preview);
     }
     item.appendChild(actions);
     fragment.appendChild(item);
@@ -1594,7 +1587,7 @@ function openHistoryEntry(id) {
   const entry = state.history.find((item) => item.id === id);
   if (!entry) return;
   document.body.classList.add("has-file");
-  setHeroCollapsed(true);
+  setPanelCollapsedById("hero", true);
   elements.transcript.value = entry.text;
   clearSummary();
   const estimatedTokens = entry.tokens?.estimate || estimateTokens(entry.text);
@@ -1756,7 +1749,7 @@ function setSegments(chunks, file) {
 function setFile(file) {
   state.file = file;
   document.body.classList.toggle("has-file", Boolean(file));
-  setHeroCollapsed(Boolean(file));
+  setPanelCollapsedById("hero", Boolean(file));
   state.durationSeconds = null;
   state.usage = { input: 0, output: 0, total: 0 };
   state.usageSeen = false;
@@ -2564,18 +2557,6 @@ elements.fileInput.addEventListener("change", (event) => {
   setFile(file);
 });
 
-if (elements.changeFileBtn) {
-  elements.changeFileBtn.addEventListener("click", () => {
-    elements.fileInput?.click();
-  });
-}
-
-if (elements.heroToggleBtn) {
-  elements.heroToggleBtn.addEventListener("click", () => {
-    setHeroCollapsed(!state.heroCollapsed);
-  });
-}
-
 elements.audioPreview.addEventListener("loadedmetadata", () => {
   const duration = elements.audioPreview.duration;
   state.durationSeconds = Number.isFinite(duration) ? duration : null;
@@ -2632,6 +2613,20 @@ if (elements.segmentsToggleBtn) {
     setSegmentsVisibility(!state.segmentsVisible);
   });
 }
+
+const panelToggles = document.querySelectorAll("[data-panel-toggle]");
+panelToggles.forEach((toggle) => {
+  const panel = toggle.closest(".collapsible-panel");
+  if (panel) {
+    setPanelCollapsed(panel, panel.classList.contains("is-collapsed"));
+  }
+  toggle.addEventListener("click", () => {
+    const targetPanel = toggle.closest(".collapsible-panel");
+    if (!targetPanel) return;
+    const shouldCollapse = !targetPanel.classList.contains("is-collapsed");
+    setPanelCollapsed(targetPanel, shouldCollapse);
+  });
+});
 
 elements.copyBtn.addEventListener("click", async () => {
   const text = elements.transcript.value;
