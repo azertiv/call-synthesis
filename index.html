@@ -274,170 +274,36 @@
                   </div>
                   <p class="panel-subtitle">Glissez votre fichier ou cliquez pour sélectionner.</p>
                 </div>
+                <div class="panel-actions hero-actions">
+                  <button
+                    class="ghost small hero-toggle"
+                    id="heroToggleBtn"
+                    type="button"
+                    aria-expanded="true"
+                    aria-controls="heroBody"
+                    hidden
+                  >
+                    Masquer le chargeur
+                  </button>
+                </div>
               </div>
-              <div class="dropzone" id="dropzone">
-                <input type="file" id="fileInput" accept="audio/*" />
-                <div class="drop-content">
-                  <div class="drop-icon">⬆</div>
-                  <div>
-                    <strong>Glissez ou cliquez</strong>
-                    <span>m4a, mp3, wav, mp4, webm</span>
+              <div class="hero-body" id="heroBody">
+                <div class="dropzone" id="dropzone">
+                  <input type="file" id="fileInput" accept="audio/*" />
+                  <div class="drop-content">
+                    <div class="drop-icon">⬆</div>
+                    <div>
+                      <strong>Glissez ou cliquez</strong>
+                      <span>m4a, mp3, wav, mp4, webm</span>
+                    </div>
                   </div>
                 </div>
-              </div>
-              <div class="hero-foot">
-                <span>Formats acceptés : m4a, mp3, wav, mp4, webm.</span>
-                <span>La transcription se lance dans l'éditeur.</span>
-              </div>
-            </section>
-
-            <section class="panel editor stage-view" id="editorStage">
-              <div class="panel-header">
-                <div class="panel-heading">
-                  <div class="panel-title-row">
-                    <span class="panel-number">02</span>
-                    <span class="section-icon" aria-hidden="true">
-                      <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="M5 6h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-                        <path d="M5 12h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-                        <path d="M5 18h9" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-                      </svg>
-                    </span>
-                    <h2>Éditeur de transcription</h2>
-                  </div>
-                  <p class="panel-subtitle">Relisez et corrigez la transcription complète.</p>
+                <div class="hero-foot">
+                  <span>Formats acceptés : m4a, mp3, wav, mp4, webm.</span>
+                  <span>La transcription se lance dans l'éditeur.</span>
                 </div>
               </div>
-              <div class="editor-meta">
-                <div class="file-meta" id="fileMeta">Aucun fichier.</div>
-                <audio id="audioPreview" controls hidden></audio>
-              </div>
-              <textarea id="transcript" placeholder="La transcription apparaîtra ici..." readonly></textarea>
-            </section>
-
-            <section class="panel summary summary-panel stage-view" id="summaryStage">
-              <div class="panel-header">
-                <div class="panel-heading">
-                  <div class="panel-title-row">
-                    <span class="panel-number">03</span>
-                    <span class="section-icon" aria-hidden="true">
-                      <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="M6 6h12" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-                        <path d="M6 12h9" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-                        <path d="M6 18h7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-                      </svg>
-                    </span>
-                    <h2>Synthèse</h2>
-                  </div>
-                  <p class="panel-subtitle">La synthèse apparaît ici dès qu'elle est prête.</p>
-                </div>
-              </div>
-              <div class="summary-title-row" id="summaryTitleRow" hidden>
-                <label class="field">
-                  <span>Titre</span>
-                  <input type="text" id="summaryTitleInput" placeholder="Titre de la synthèse" />
-                </label>
-              </div>
-              <div class="summary-output is-empty" id="summaryOutput" aria-live="polite">
-                La synthèse apparaîtra ici...
-              </div>
-            </section>
-          </section>
-
-          <aside class="control-deck" aria-label="Tableau de contrôle">
-            <section class="panel status">
-              <div class="panel-header">
-                <div class="panel-heading">
-                  <div class="panel-title-row">
-                    <span class="section-icon" aria-hidden="true">
-                      <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <path
-                          d="M3 12h4l2.5-5 4 10 2-5H21"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          stroke-width="1.6"
-                        />
-                      </svg>
-                    </span>
-                    <h2>Statut &amp; usage</h2>
-                  </div>
-                  <p class="panel-subtitle">Suivez l'avancement et l'estimation en direct.</p>
-                </div>
-              </div>
-              <div class="progress-block" id="progressBlock" hidden>
-                <div class="progress-header">
-                  <span class="progress-label" id="progressLabel">Transcription en cours</span>
-                  <span class="progress-value" id="progressValue">0%</span>
-                </div>
-                <div
-                  class="progress-track"
-                  id="progressTrack"
-                  role="progressbar"
-                  aria-valuemin="0"
-                  aria-valuemax="100"
-                  aria-valuenow="0"
-                >
-                  <div class="progress-fill" id="progressFill"></div>
-                </div>
-                <div class="progress-meta" id="progressMeta">0/0 segments</div>
-              </div>
-              <div class="status-log" id="statusLog">
-                <div class="status-line idle">En attente.</div>
-              </div>
-              <div class="stats">
-                <div>
-                  <span class="stat-label">Tokens input</span>
-                  <span class="stat-value" id="tokensInput">—</span>
-                </div>
-                <div>
-                  <span class="stat-label">Tokens output</span>
-                  <span class="stat-value" id="tokensOutput">—</span>
-                </div>
-                <div>
-                  <span class="stat-label">Total</span>
-                  <span class="stat-value" id="tokensTotal">—</span>
-                </div>
-                <div>
-                  <span class="stat-label">Estimation</span>
-                  <span class="stat-value" id="tokensEstimate">—</span>
-                </div>
-              </div>
-              <div class="hint" id="usageHint">Estimation locale.</div>
-            </section>
-
-            <section class="panel action-panel transcription-actions">
-              <div class="panel-header">
-                <div class="panel-heading">
-                  <div class="panel-title-row">
-                    <span class="section-icon" aria-hidden="true">
-                      <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="M5 6h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-                        <path d="M5 12h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-                        <path d="M5 18h9" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-                      </svg>
-                    </span>
-                    <h2>Actions transcription</h2>
-                  </div>
-                  <p class="panel-subtitle">Lancez, annulez ou exportez la transcription.</p>
-                </div>
-              </div>
-              <div class="action-stack">
-                <button class="ghost" id="changeFileBtn" type="button">Changer de fichier</button>
-                <div class="action-row">
-                  <button class="primary" id="transcribeBtn" disabled>Transcrire</button>
-                  <button class="ghost" id="cancelBtn" disabled>Annuler</button>
-                </div>
-                <div class="action-row">
-                  <button class="ghost" id="copyBtn">Copier</button>
-                  <button class="ghost" id="downloadBtn">Télécharger</button>
-                </div>
-              </div>
-            </section>
-
-            <section class="panel segments-panel">
-              <div class="segments is-collapsed" id="segmentsPanel">
+              <div class="segments segments-inline is-collapsed" id="segmentsPanel">
                 <div class="segments-header">
                   <div class="segments-title">
                     <span class="section-icon" aria-hidden="true">
@@ -505,10 +371,46 @@
               </div>
             </section>
 
-            <section class="panel action-panel summary-actions">
+            <section class="panel editor stage-view" id="editorStage">
               <div class="panel-header">
                 <div class="panel-heading">
                   <div class="panel-title-row">
+                    <span class="panel-number">02</span>
+                    <span class="section-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M5 6h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                        <path d="M5 12h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                        <path d="M5 18h9" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                      </svg>
+                    </span>
+                    <h2>Éditeur de transcription</h2>
+                  </div>
+                  <p class="panel-subtitle">Relisez et corrigez la transcription complète.</p>
+                </div>
+                <div class="panel-actions">
+                  <button class="ghost" id="copyBtn">Copier</button>
+                  <button class="ghost" id="downloadBtn">Télécharger</button>
+                </div>
+              </div>
+              <div class="editor-meta">
+                <div class="file-meta" id="fileMeta">Aucun fichier.</div>
+                <audio id="audioPreview" controls hidden></audio>
+              </div>
+              <div class="editor-toolbar">
+                <button class="ghost" id="changeFileBtn" type="button">Changer de fichier</button>
+                <div class="editor-actions">
+                  <button class="primary" id="transcribeBtn" disabled>Transcrire</button>
+                  <button class="ghost" id="cancelBtn" disabled>Annuler</button>
+                </div>
+              </div>
+              <textarea id="transcript" placeholder="La transcription apparaîtra ici..." readonly></textarea>
+            </section>
+
+            <section class="panel summary summary-panel stage-view" id="summaryStage">
+              <div class="panel-header">
+                <div class="panel-heading">
+                  <div class="panel-title-row">
+                    <span class="panel-number">03</span>
                     <span class="section-icon" aria-hidden="true">
                       <svg viewBox="0 0 24 24" aria-hidden="true">
                         <path d="M6 6h12" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
@@ -516,18 +418,81 @@
                         <path d="M6 18h7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
                       </svg>
                     </span>
-                    <h2>Actions synthèse</h2>
+                    <h2>Synthèse</h2>
                   </div>
-                  <p class="panel-subtitle">Générez la synthèse puis exportez en PDF.</p>
+                  <p class="panel-subtitle">La synthèse apparaît ici dès qu'elle est prête.</p>
                 </div>
-              </div>
-              <div class="action-stack">
-                <div class="action-row">
+                <div class="panel-actions">
                   <button class="primary" id="summarizeBtn" disabled>Générer la synthèse</button>
                   <button class="ghost" id="downloadSummaryBtn" disabled>Télécharger PDF</button>
                 </div>
               </div>
+              <div class="summary-title-row" id="summaryTitleRow" hidden>
+                <label class="field">
+                  <span>Titre</span>
+                  <input type="text" id="summaryTitleInput" placeholder="Titre de la synthèse" />
+                </label>
+              </div>
+              <div class="summary-output is-empty" id="summaryOutput" aria-live="polite">
+                La synthèse apparaîtra ici...
+              </div>
             </section>
+          </section>
+
+          <aside class="control-deck" aria-label="Tableau de contrôle">
+            <section class="panel status">
+              <div class="panel-header">
+                <div class="panel-heading">
+                  <div class="panel-title-row">
+                    <span class="section-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          d="M3 12h4l2.5-5 4 10 2-5H21"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="1.6"
+                        />
+                      </svg>
+                    </span>
+                    <h2>Statut &amp; usage</h2>
+                  </div>
+                  <p class="panel-subtitle">Suivez l'avancement et l'usage en direct.</p>
+                </div>
+              </div>
+              <div class="progress-block" id="progressBlock" hidden>
+                <div class="progress-header">
+                  <span class="progress-label" id="progressLabel">Transcription en cours</span>
+                  <span class="progress-value" id="progressValue">0%</span>
+                </div>
+                <div
+                  class="progress-track"
+                  id="progressTrack"
+                  role="progressbar"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  aria-valuenow="0"
+                >
+                  <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <div class="progress-meta" id="progressMeta">0/0 segments</div>
+              </div>
+              <div class="status-log" id="statusLog">
+                <div class="status-line idle">En attente.</div>
+              </div>
+              <div class="stats">
+                <div>
+                  <span class="stat-label">Tokens totaux</span>
+                  <span class="stat-value" id="tokensTotal">—</span>
+                </div>
+                <div>
+                  <span class="stat-label">Prix</span>
+                  <span class="stat-value" id="tokensPrice">—</span>
+                </div>
+              </div>
+            </section>
+
           </aside>
         </main>
       </div>

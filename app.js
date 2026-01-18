@@ -27,6 +27,8 @@ const HISTORY_PREVIEW_CHARS = 160;
 const OVERLAP_MIN_WORDS = 6;
 const OVERLAP_MAX_WORDS = 80;
 const PDF_FONT_FAMILY = "times";
+// Ajuster selon vos tarifs API.
+const TOKEN_PRICE_EUR_PER_1K = 0.002;
 
 const ICONS = {
   open:
@@ -73,10 +75,14 @@ const elements = {
   summaryTitleInput: document.getElementById("summaryTitleInput"),
   summaryModel: document.getElementById("summaryModel"),
   summaryReasoning: document.getElementById("summaryReasoning"),
+  heroStage: document.getElementById("heroStage"),
+  heroBody: document.getElementById("heroBody"),
+  heroToggleBtn: document.getElementById("heroToggleBtn"),
   tokensInput: document.getElementById("tokensInput"),
   tokensOutput: document.getElementById("tokensOutput"),
   tokensTotal: document.getElementById("tokensTotal"),
   tokensEstimate: document.getElementById("tokensEstimate"),
+  tokensPrice: document.getElementById("tokensPrice"),
   usageHint: document.getElementById("usageHint"),
   segmentsPanel: document.getElementById("segmentsPanel"),
   segmentsList: document.getElementById("segmentsList"),
@@ -113,6 +119,7 @@ const state = {
   historyEnabled: true,
   historyQuery: "",
   activeHistoryId: null,
+  heroCollapsed: false,
   summaryText: "",
   summaryTitle: "",
   summaryProcessing: false,
@@ -124,6 +131,7 @@ const ffmpegState = {
 };
 
 let progressLine = null;
+let tokenLine = null;
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return "—";
@@ -310,6 +318,7 @@ function setStatus(message, isIdle = false) {
 function clearStatus() {
   elements.statusLog.innerHTML = "";
   progressLine = null;
+  tokenLine = null;
   resetProgressBar();
 }
 
@@ -424,11 +433,58 @@ function setProcessing(isProcessing) {
   updateSummaryControls();
 }
 
+function toTokenNumber(value) {
+  const numeric = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function formatPriceEUR(value) {
+  const formatted = value.toFixed(2).replace(".", ",");
+  return `${formatted} €`;
+}
+
+function updateTokenStatusLine({ input, output, total, estimate }) {
+  if (!elements.statusLog) return;
+  if (!tokenLine) {
+    tokenLine = document.createElement("div");
+    tokenLine.className = "status-line tokens";
+  }
+  const parts = [
+    `input ${input ?? "—"}`,
+    `output ${output ?? "—"}`,
+    `total ${total ?? "—"}`,
+    `estimé ${estimate ?? "—"}`,
+  ];
+  tokenLine.textContent = `Tokens : ${parts.join(" · ")}`;
+  elements.statusLog.appendChild(tokenLine);
+  elements.statusLog.scrollTop = elements.statusLog.scrollHeight;
+}
+
 function setTokens({ input, output, total, estimate }) {
-  elements.tokensInput.textContent = input ?? "—";
-  elements.tokensOutput.textContent = output ?? "—";
-  elements.tokensTotal.textContent = total ?? "—";
-  elements.tokensEstimate.textContent = estimate ?? "—";
+  if (elements.tokensInput) {
+    elements.tokensInput.textContent = input ?? "—";
+  }
+  if (elements.tokensOutput) {
+    elements.tokensOutput.textContent = output ?? "—";
+  }
+  if (elements.tokensTotal) {
+    elements.tokensTotal.textContent = total ?? "—";
+  }
+  if (elements.tokensEstimate) {
+    elements.tokensEstimate.textContent = estimate ?? "—";
+  }
+  const totalValue = toTokenNumber(total);
+  const estimateValue = toTokenNumber(estimate);
+  const tokenCount = totalValue ?? estimateValue;
+  if (elements.tokensPrice) {
+    if (tokenCount === null) {
+      elements.tokensPrice.textContent = "—";
+    } else {
+      const price = (tokenCount / 1000) * TOKEN_PRICE_EUR_PER_1K;
+      elements.tokensPrice.textContent = formatPriceEUR(price);
+    }
+  }
+  updateTokenStatusLine({ input, output, total, estimate });
 }
 
 function estimateTokens(text) {
@@ -524,10 +580,7 @@ function updateSummaryControls() {
   const transcriptText = elements.transcript?.value?.trim() || "";
   const canSummarize =
     Boolean(transcriptText) && !state.processing && !state.summaryProcessing;
-  document.body.classList.toggle(
-    "has-summary",
-    Boolean(state.summaryText) || state.summaryProcessing,
-  );
+  document.body.classList.toggle("has-transcript", Boolean(transcriptText));
   if (elements.summarizeBtn) {
     elements.summarizeBtn.disabled = !canSummarize;
     elements.summarizeBtn.textContent = state.summaryProcessing
@@ -1169,6 +1222,27 @@ function clearSegments() {
   updateSegmentsCount();
 }
 
+function setHeroCollapsed(collapsed) {
+  state.heroCollapsed = Boolean(collapsed);
+  if (elements.heroStage) {
+    elements.heroStage.classList.toggle("is-collapsed", state.heroCollapsed);
+  }
+  if (elements.heroBody) {
+    elements.heroBody.hidden = state.heroCollapsed;
+  }
+  if (elements.heroToggleBtn) {
+    const hasFile = Boolean(state.file) || document.body.classList.contains("has-file");
+    elements.heroToggleBtn.hidden = !hasFile;
+    elements.heroToggleBtn.setAttribute(
+      "aria-expanded",
+      state.heroCollapsed ? "false" : "true",
+    );
+    elements.heroToggleBtn.textContent = state.heroCollapsed
+      ? "Afficher le chargeur"
+      : "Masquer le chargeur";
+  }
+}
+
 function loadHistoryEntries() {
   const raw = localStorage.getItem(HISTORY_STORAGE_KEY);
   if (!raw) return [];
@@ -1520,6 +1594,7 @@ function openHistoryEntry(id) {
   const entry = state.history.find((item) => item.id === id);
   if (!entry) return;
   document.body.classList.add("has-file");
+  setHeroCollapsed(true);
   elements.transcript.value = entry.text;
   clearSummary();
   const estimatedTokens = entry.tokens?.estimate || estimateTokens(entry.text);
@@ -1681,6 +1756,7 @@ function setSegments(chunks, file) {
 function setFile(file) {
   state.file = file;
   document.body.classList.toggle("has-file", Boolean(file));
+  setHeroCollapsed(Boolean(file));
   state.durationSeconds = null;
   state.usage = { input: 0, output: 0, total: 0 };
   state.usageSeen = false;
@@ -2446,7 +2522,12 @@ async function transcribe() {
         estimate: estimatedTokens || "—",
       });
     } else {
-      elements.tokensEstimate.textContent = estimatedTokens || "—";
+      setTokens({
+        input: state.usage.input || "—",
+        output: state.usage.output || "—",
+        total: state.usage.total || "—",
+        estimate: estimatedTokens || "—",
+      });
     }
     setStatus("Transcription terminee. Chevauchements nettoyes.");
     if (state.historyEnabled && fullTranscript.trim()) {
@@ -2486,6 +2567,12 @@ elements.fileInput.addEventListener("change", (event) => {
 if (elements.changeFileBtn) {
   elements.changeFileBtn.addEventListener("click", () => {
     elements.fileInput?.click();
+  });
+}
+
+if (elements.heroToggleBtn) {
+  elements.heroToggleBtn.addEventListener("click", () => {
+    setHeroCollapsed(!state.heroCollapsed);
   });
 }
 
