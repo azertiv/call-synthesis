@@ -1,7 +1,8 @@
 const MODEL_ID = "voxtral-mini-latest";
-const SUMMARY_MODEL_ID = "mistral-medium-latest";
-const SUMMARY_ENDPOINT = "https://api.mistral.ai/v1/chat/completions";
-const SUMMARY_MODEL_STORAGE = "callSynthesis.summaryModel";
+const OPENAI_SUMMARY_MODEL_ID = "gpt-5-mini";
+const OPENAI_SUMMARY_ENDPOINT = "https://api.openai.com/v1/responses";
+const OPENAI_SUMMARY_MODEL_STORAGE = "callSynthesis.openAiSummaryModel";
+const OPENAI_SUMMARY_REASONING_STORAGE = "callSynthesis.openAiSummaryReasoning";
 const PROVIDER_CONFIG = {
   label: "Mistral",
   endpoint: "https://api.mistral.ai/v1/audio/transcriptions",
@@ -16,6 +17,8 @@ const FFMPEG_CORE_FILE = "ffmpeg-core.js";
 const FFMPEG_WASM_FILE = "ffmpeg-core.wasm";
 const STORAGE_KEY = "callSynthesis.apiKey";
 const STORAGE_REMEMBER = "callSynthesis.remember";
+const OPENAI_STORAGE_KEY = "callSynthesis.openAiApiKey";
+const OPENAI_STORAGE_REMEMBER = "callSynthesis.openAiRemember";
 const THEME_STORAGE = "callSynthesis.theme";
 const HISTORY_STORAGE_KEY = "callSynthesis.history";
 const HISTORY_ENABLED_KEY = "callSynthesis.historyEnabled";
@@ -41,6 +44,9 @@ const elements = {
   clearKey: document.getElementById("clearKey"),
   language: document.getElementById("language"),
   streamingToggle: document.getElementById("streamingToggle"),
+  openAiKey: document.getElementById("openAiKey"),
+  rememberOpenAiKey: document.getElementById("rememberOpenAiKey"),
+  clearOpenAiKey: document.getElementById("clearOpenAiKey"),
   dropzone: document.getElementById("dropzone"),
   globalDrop: document.getElementById("globalDrop"),
   fileInput: document.getElementById("fileInput"),
@@ -62,6 +68,7 @@ const elements = {
   downloadSummaryBtn: document.getElementById("downloadSummaryBtn"),
   summaryOutput: document.getElementById("summaryOutput"),
   summaryModel: document.getElementById("summaryModel"),
+  summaryReasoning: document.getElementById("summaryReasoning"),
   tokensInput: document.getElementById("tokensInput"),
   tokensOutput: document.getElementById("tokensOutput"),
   tokensTotal: document.getElementById("tokensTotal"),
@@ -479,7 +486,14 @@ function updateSummaryControls() {
   }
 }
 
-function buildSummaryMessages(transcript) {
+function normalizeSummaryReasoning(value) {
+  if (value === "high" || value === "medium" || value === "low") {
+    return value;
+  }
+  return "medium";
+}
+
+function buildOpenAiSummaryInput(transcript) {
   const system = [
     "Tu es un assistant expert en synthèse de calls professionnels.",
     "Tu écris en français clair, précis et factuel.",
@@ -588,51 +602,73 @@ Produit dans la langue d’origine du call, sans texte parasite ni méta-comment
 Transcription :
 ${transcript}`;
   return [
-    { role: "system", content: system },
-    { role: "user", content: user },
+    { role: "system", content: [{ type: "input_text", text: system }] },
+    { role: "user", content: [{ type: "input_text", text: user }] },
   ];
 }
 
-async function requestSummary({ apiKey, transcript, model }) {
-  const response = await fetch(SUMMARY_ENDPOINT, {
+function extractOpenAiResponseText(data) {
+  if (typeof data?.output_text === "string" && data.output_text.trim()) {
+    return data.output_text.trim();
+  }
+  const output = Array.isArray(data?.output) ? data.output : [];
+  const chunks = [];
+  output.forEach((item) => {
+    const content = Array.isArray(item?.content) ? item.content : [];
+    content.forEach((part) => {
+      if (typeof part?.text === "string") {
+        chunks.push(part.text);
+      }
+    });
+  });
+  return chunks.join("").trim();
+}
+
+async function requestOpenAiSummary({ apiKey, transcript, model, reasoning }) {
+  const payload = {
+    model: model || OPENAI_SUMMARY_MODEL_ID,
+    input: buildOpenAiSummaryInput(transcript),
+    reasoning: { effort: normalizeSummaryReasoning(reasoning) },
+  };
+  const response = await fetch(OPENAI_SUMMARY_ENDPOINT, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      model: model || SUMMARY_MODEL_ID,
-      messages: buildSummaryMessages(transcript),
-      temperature: 0.2,
-    }),
+    body: JSON.stringify(payload),
   });
 
   if (!response.ok) {
     const errorText = await response.text();
     const parsedMessage = extractApiErrorMessage(errorText);
-    const message = parsedMessage || errorText || `Erreur API ${PROVIDER_CONFIG.label}.`;
+    const message = parsedMessage || errorText || "Erreur API OpenAI.";
     throw new Error(message.trim());
   }
 
   const data = await response.json();
-  const content = data?.choices?.[0]?.message?.content;
-  if (typeof content !== "string" || !content.trim()) {
+  const content = extractOpenAiResponseText(data);
+  if (!content) {
     throw new Error("Réponse de synthèse vide.");
   }
   return {
-    text: content.trim(),
+    text: content,
     usage: data.usage,
   };
 }
 
 async function summarizeTranscript() {
-  const apiKey = elements.apiKey.value.trim();
+  const apiKey = elements.openAiKey?.value?.trim() || "";
   const transcriptText = elements.transcript.value.trim();
-  const summaryModel = elements.summaryModel?.value?.trim() || SUMMARY_MODEL_ID;
+  const summaryModel =
+    elements.summaryModel?.value?.trim() || OPENAI_SUMMARY_MODEL_ID;
+  const summaryReasoning = normalizeSummaryReasoning(
+    elements.summaryReasoning?.value?.trim(),
+  );
 
   if (!apiKey) {
     clearStatus();
-    setStatus(`Veuillez renseigner votre clé API ${PROVIDER_CONFIG.label}.`);
+    setStatus("Veuillez renseigner votre clé API OpenAI.");
     return;
   }
   if (!transcriptText) {
@@ -648,10 +684,11 @@ async function summarizeTranscript() {
   setStatus("Synthèse en cours...");
 
   try {
-    const result = await requestSummary({
+    const result = await requestOpenAiSummary({
       apiKey,
       transcript: transcriptText,
       model: summaryModel,
+      reasoning: summaryReasoning,
     });
     setSummaryText(result.text);
     setStatus("Synthèse générée.");
@@ -2331,8 +2368,15 @@ if (elements.summaryModel) {
   elements.summaryModel.addEventListener("change", (event) => {
     const value = event.target.value;
     if (value) {
-      localStorage.setItem(SUMMARY_MODEL_STORAGE, value);
+      localStorage.setItem(OPENAI_SUMMARY_MODEL_STORAGE, value);
     }
+  });
+}
+
+if (elements.summaryReasoning) {
+  elements.summaryReasoning.addEventListener("change", (event) => {
+    const value = normalizeSummaryReasoning(event.target.value);
+    localStorage.setItem(OPENAI_SUMMARY_REASONING_STORAGE, value);
   });
 }
 
@@ -2361,8 +2405,46 @@ elements.clearKey.addEventListener("click", () => {
   elements.rememberKey.checked = false;
   localStorage.removeItem(STORAGE_KEY);
   localStorage.removeItem(STORAGE_REMEMBER);
-  setStatus("Clé API effacée.");
+  setStatus("Clé API Mistral effacée.");
 });
+
+if (elements.rememberOpenAiKey) {
+  elements.rememberOpenAiKey.addEventListener("change", (event) => {
+    const remember = event.target.checked;
+    if (remember) {
+      localStorage.setItem(OPENAI_STORAGE_REMEMBER, "true");
+      const key = elements.openAiKey?.value?.trim();
+      if (key) {
+        localStorage.setItem(OPENAI_STORAGE_KEY, key);
+      }
+    } else {
+      localStorage.removeItem(OPENAI_STORAGE_REMEMBER);
+      localStorage.removeItem(OPENAI_STORAGE_KEY);
+    }
+  });
+}
+
+if (elements.openAiKey) {
+  elements.openAiKey.addEventListener("input", () => {
+    if (elements.rememberOpenAiKey?.checked) {
+      localStorage.setItem(OPENAI_STORAGE_KEY, elements.openAiKey.value.trim());
+    }
+  });
+}
+
+if (elements.clearOpenAiKey) {
+  elements.clearOpenAiKey.addEventListener("click", () => {
+    if (elements.openAiKey) {
+      elements.openAiKey.value = "";
+    }
+    if (elements.rememberOpenAiKey) {
+      elements.rememberOpenAiKey.checked = false;
+    }
+    localStorage.removeItem(OPENAI_STORAGE_KEY);
+    localStorage.removeItem(OPENAI_STORAGE_REMEMBER);
+    setStatus("Clé API OpenAI effacée.");
+  });
+}
 
 function loadStoredKey() {
   const remember = localStorage.getItem(STORAGE_REMEMBER) === "true";
@@ -2377,7 +2459,7 @@ function loadStoredKey() {
 
 function loadSummaryModelChoice() {
   if (!elements.summaryModel) return;
-  const stored = localStorage.getItem(SUMMARY_MODEL_STORAGE);
+  const stored = localStorage.getItem(OPENAI_SUMMARY_MODEL_STORAGE);
   if (!stored) return;
   const option = elements.summaryModel.querySelector(`option[value="${stored}"]`);
   if (option) {
@@ -2385,8 +2467,33 @@ function loadSummaryModelChoice() {
   }
 }
 
+function loadSummaryReasoningChoice() {
+  if (!elements.summaryReasoning) return;
+  const stored = localStorage.getItem(OPENAI_SUMMARY_REASONING_STORAGE);
+  if (!stored) return;
+  const normalized = normalizeSummaryReasoning(stored);
+  const option = elements.summaryReasoning.querySelector(
+    `option[value="${normalized}"]`,
+  );
+  if (option) {
+    elements.summaryReasoning.value = normalized;
+  }
+}
+
+function loadStoredOpenAiKey() {
+  const remember = localStorage.getItem(OPENAI_STORAGE_REMEMBER) === "true";
+  if (!remember) return;
+  const key = localStorage.getItem(OPENAI_STORAGE_KEY);
+  if (key && elements.openAiKey && elements.rememberOpenAiKey) {
+    elements.openAiKey.value = key;
+    elements.rememberOpenAiKey.checked = true;
+  }
+}
+
 loadStoredKey();
+loadStoredOpenAiKey();
 loadSummaryModelChoice();
+loadSummaryReasoningChoice();
 loadThemeChoice();
 loadHistoryState();
 setHistoryPanelOpen(true);

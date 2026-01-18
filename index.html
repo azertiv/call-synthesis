@@ -161,16 +161,41 @@
                   <option value="en">Anglais</option>
                 </select>
               </label>
-              <label class="field">
-                <span>Modèle de synthèse</span>
-                <select id="summaryModel">
-                  <option value="mistral-medium-latest" selected>mistral-medium-latest</option>
-                  <option value="mistral-small-latest">mistral-small-latest</option>
-                </select>
-              </label>
               <label class="toggle">
                 <input type="checkbox" id="streamingToggle" />
                 <span>Streaming SSE (affichage en direct)</span>
+              </label>
+              <label class="field">
+                <span>Clé API (OpenAI)</span>
+                <input
+                  type="password"
+                  id="openAiKey"
+                  autocomplete="off"
+                  placeholder="sk-..."
+                  spellcheck="false"
+                />
+              </label>
+              <div class="row">
+                <label class="toggle">
+                  <input type="checkbox" id="rememberOpenAiKey" />
+                  <span>Mémoriser sur cet appareil</span>
+                </label>
+                <button class="ghost" id="clearOpenAiKey">Effacer</button>
+              </div>
+              <label class="field">
+                <span>Modèle de synthèse (OpenAI)</span>
+                <select id="summaryModel">
+                  <option value="gpt-5-mini" selected>GPT-5 mini</option>
+                  <option value="gpt-5-nano">GPT-5 nano</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Raisonnement (OpenAI)</span>
+                <select id="summaryReasoning">
+                  <option value="high">Élevé</option>
+                  <option value="medium" selected>Moyen</option>
+                  <option value="low">Faible</option>
+                </select>
               </label>
             </div>
           </details>
