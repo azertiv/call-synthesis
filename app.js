@@ -53,6 +53,7 @@ const elements = {
   fileInput: document.getElementById("fileInput"),
   fileMeta: document.getElementById("fileMeta"),
   audioPreview: document.getElementById("audioPreview"),
+  changeFileBtn: document.getElementById("changeFileBtn"),
   transcribeBtn: document.getElementById("transcribeBtn"),
   cancelBtn: document.getElementById("cancelBtn"),
   statusLog: document.getElementById("statusLog"),
@@ -414,6 +415,9 @@ function setProcessing(isProcessing) {
   state.processing = isProcessing;
   const hasFile = Boolean(state.file);
   elements.transcribeBtn.disabled = isProcessing || !hasFile;
+  if (elements.changeFileBtn) {
+    elements.changeFileBtn.disabled = isProcessing;
+  }
   if (elements.cancelBtn) {
     elements.cancelBtn.disabled = !isProcessing;
   }
@@ -1511,6 +1515,7 @@ function addHistoryEntry(entry) {
 function openHistoryEntry(id) {
   const entry = state.history.find((item) => item.id === id);
   if (!entry) return;
+  document.body.classList.add("has-file");
   elements.transcript.value = entry.text;
   clearSummary();
   const estimatedTokens = entry.tokens?.estimate || estimateTokens(entry.text);
@@ -1671,6 +1676,7 @@ function setSegments(chunks, file) {
 
 function setFile(file) {
   state.file = file;
+  document.body.classList.toggle("has-file", Boolean(file));
   state.durationSeconds = null;
   state.usage = { input: 0, output: 0, total: 0 };
   state.usageSeen = false;
@@ -2472,6 +2478,12 @@ elements.fileInput.addEventListener("change", (event) => {
   const file = event.target.files?.[0] || null;
   setFile(file);
 });
+
+if (elements.changeFileBtn) {
+  elements.changeFileBtn.addEventListener("click", () => {
+    elements.fileInput?.click();
+  });
+}
 
 elements.audioPreview.addEventListener("loadedmetadata", () => {
   const duration = elements.audioPreview.duration;
