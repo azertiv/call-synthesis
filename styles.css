@@ -769,6 +769,12 @@ textarea {
   font-weight: 600;
 }
 
+.summary-title-row {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
 .row {
   display: flex;
   align-items: center;

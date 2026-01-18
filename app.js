@@ -26,6 +26,7 @@ const HISTORY_LIMIT = 30;
 const HISTORY_PREVIEW_CHARS = 160;
 const OVERLAP_MIN_WORDS = 6;
 const OVERLAP_MAX_WORDS = 80;
+const PDF_FONT_FAMILY = "times";
 
 const ICONS = {
   open:
@@ -67,6 +68,8 @@ const elements = {
   summarizeBtn: document.getElementById("summarizeBtn"),
   downloadSummaryBtn: document.getElementById("downloadSummaryBtn"),
   summaryOutput: document.getElementById("summaryOutput"),
+  summaryTitleRow: document.getElementById("summaryTitleRow"),
+  summaryTitleInput: document.getElementById("summaryTitleInput"),
   summaryModel: document.getElementById("summaryModel"),
   summaryReasoning: document.getElementById("summaryReasoning"),
   tokensInput: document.getElementById("tokensInput"),
@@ -460,12 +463,23 @@ function setSummaryText(text) {
   if (!normalized) {
     elements.summaryOutput.classList.add("is-empty");
     elements.summaryOutput.textContent = "La synthèse apparaîtra ici...";
+    updateSummaryTitleVisibility();
     updateSummaryControls();
     return;
   }
   elements.summaryOutput.classList.remove("is-empty");
   elements.summaryOutput.innerHTML = formatSummaryHtml(normalized);
+  updateSummaryTitleVisibility();
   updateSummaryControls();
+}
+
+function updateSummaryTitleVisibility() {
+  if (!elements.summaryTitleRow) return;
+  const hasSummary = Boolean(state.summaryText);
+  elements.summaryTitleRow.hidden = !hasSummary;
+  if (!hasSummary && elements.summaryTitleInput) {
+    elements.summaryTitleInput.value = "";
+  }
 }
 
 function sanitizeSummaryTitle(title) {
@@ -479,8 +493,12 @@ function sanitizeSummaryTitle(title) {
     .slice(0, 120);
 }
 
-function setSummaryTitle(title) {
+function setSummaryTitle(title, options = {}) {
   state.summaryTitle = sanitizeSummaryTitle(title);
+  if (options.syncInput === false) return;
+  if (elements.summaryTitleInput) {
+    elements.summaryTitleInput.value = state.summaryTitle;
+  }
 }
 
 function updateActiveHistoryTitle(title) {
@@ -880,7 +898,7 @@ function wrapPieces(doc, pieces, maxWidth, fontSize) {
   let width = 0;
 
   const measure = (piece) => {
-    doc.setFont("helvetica", piece.bold ? "bold" : "normal");
+    doc.setFont(PDF_FONT_FAMILY, piece.bold ? "bold" : "normal");
     doc.setFontSize(fontSize);
     return doc.getTextWidth(piece.text);
   };
@@ -928,7 +946,7 @@ function wrapPieces(doc, pieces, maxWidth, fontSize) {
 function renderLineTokens(doc, line, x, y, fontSize) {
   let cursorX = x;
   line.forEach((piece) => {
-    doc.setFont("helvetica", piece.bold ? "bold" : "normal");
+    doc.setFont(PDF_FONT_FAMILY, piece.bold ? "bold" : "normal");
     doc.setFontSize(fontSize);
     doc.text(piece.text, cursorX, y);
     cursorX += doc.getTextWidth(piece.text);
@@ -967,7 +985,7 @@ function renderPlainTextBlock({
   margin,
 }) {
   const pageHeight = doc.internal.pageSize.getHeight();
-  doc.setFont("helvetica", fontStyle || "normal");
+  doc.setFont(PDF_FONT_FAMILY, fontStyle || "normal");
   doc.setFontSize(fontSize);
   const cleaned = stripBoldMarkers(text);
   const lines = doc.splitTextToSize(cleaned, maxWidth);
@@ -1006,24 +1024,21 @@ function downloadSummaryPdf() {
     x: margin,
     y: cursorY,
     maxWidth: contentWidth,
-    fontSize: 18,
+    fontSize: 16,
     fontStyle: "bold",
-    lineHeight: 24,
+    lineHeight: 22,
     margin,
   });
 
-  doc.setDrawColor(30, 30, 30);
-  doc.setLineWidth(0.6);
-  doc.line(margin, cursorY + 6, pageWidth - margin, cursorY + 6);
-  cursorY += 18;
+  cursorY += 12;
 
   const blocks = parseSummaryBlocks(summaryText);
-  const bodySize = 11;
-  const bodyLineHeight = 16;
-  const h1Size = 14;
-  const h1LineHeight = 20;
-  const h2Size = 12;
-  const h2LineHeight = 18;
+  const bodySize = 10;
+  const bodyLineHeight = 15;
+  const h1Size = 13;
+  const h1LineHeight = 18;
+  const h2Size = 11;
+  const h2LineHeight = 16;
   const bulletIndent = 14;
 
   const addSpacing = (amount) => {
@@ -1086,7 +1101,7 @@ function downloadSummaryPdf() {
         margin,
       });
       const bulletY = rendered.firstLineY ?? cursorY;
-      doc.setFont("helvetica", "normal");
+      doc.setFont(PDF_FONT_FAMILY, "normal");
       doc.setFontSize(bodySize);
       doc.text("•", bulletX, bulletY);
       cursorY = rendered.y + 2;
@@ -2736,6 +2751,19 @@ if (elements.summaryReasoning) {
   elements.summaryReasoning.addEventListener("change", (event) => {
     const value = normalizeSummaryReasoning(event.target.value);
     localStorage.setItem(OPENAI_SUMMARY_REASONING_STORAGE, value);
+  });
+}
+
+if (elements.summaryTitleInput) {
+  elements.summaryTitleInput.addEventListener("input", (event) => {
+    const value = event.target.value;
+    setSummaryTitle(value, { syncInput: false });
+    updateActiveHistoryTitle(value);
+  });
+  elements.summaryTitleInput.addEventListener("blur", () => {
+    if (elements.summaryTitleInput) {
+      elements.summaryTitleInput.value = state.summaryTitle;
+    }
   });
 }
 
