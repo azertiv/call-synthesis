@@ -524,6 +524,10 @@ function updateSummaryControls() {
   const transcriptText = elements.transcript?.value?.trim() || "";
   const canSummarize =
     Boolean(transcriptText) && !state.processing && !state.summaryProcessing;
+  document.body.classList.toggle(
+    "has-summary",
+    Boolean(state.summaryText) || state.summaryProcessing,
+  );
   if (elements.summarizeBtn) {
     elements.summarizeBtn.disabled = !canSummarize;
     elements.summarizeBtn.textContent = state.summaryProcessing
