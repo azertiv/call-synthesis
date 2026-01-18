@@ -110,6 +110,7 @@ const state = {
   historyQuery: "",
   activeHistoryId: null,
   summaryText: "",
+  summaryTitle: "",
   summaryProcessing: false,
 };
 
@@ -467,8 +468,34 @@ function setSummaryText(text) {
   updateSummaryControls();
 }
 
+function sanitizeSummaryTitle(title) {
+  if (!title) return "";
+  return title
+    .replace(/^#+\s*/, "")
+    .replace(/\*\*/g, "")
+    .replace(/["'«»]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 120);
+}
+
+function setSummaryTitle(title) {
+  state.summaryTitle = sanitizeSummaryTitle(title);
+}
+
+function updateActiveHistoryTitle(title) {
+  const nextTitle = sanitizeSummaryTitle(title);
+  if (!nextTitle || !state.historyEnabled) return;
+  const entry = state.history.find((item) => item.id === state.activeHistoryId);
+  if (!entry) return;
+  entry.title = nextTitle;
+  saveHistoryEntries();
+  renderHistory();
+}
+
 function clearSummary() {
   setSummaryText("");
+  setSummaryTitle("");
 }
 
 function updateSummaryControls() {
@@ -607,6 +634,24 @@ ${transcript}`;
   ];
 }
 
+function buildOpenAiTitleInput(summaryText) {
+  const system = [
+    "Tu génères des titres courts et clairs pour des comptes rendus de calls.",
+    "Le titre est factuel, professionnel et sans fioritures.",
+  ].join(" ");
+  const user = `Donne un titre concis (4 à 7 mots) qui résume le call.
+- Langue identique au call.
+- Pas de guillemets, pas de ponctuation finale, pas de markdown.
+- Évite les termes vagues (ex. "discussion", "réunion").
+
+Synthèse :
+${summaryText}`;
+  return [
+    { role: "system", content: [{ type: "input_text", text: system }] },
+    { role: "user", content: [{ type: "input_text", text: user }] },
+  ];
+}
+
 function extractOpenAiResponseText(data) {
   if (typeof data?.output_text === "string" && data.output_text.trim()) {
     return data.output_text.trim();
@@ -657,6 +702,39 @@ async function requestOpenAiSummary({ apiKey, transcript, model, reasoning }) {
   };
 }
 
+async function requestOpenAiTitle({ apiKey, summary, model, reasoning }) {
+  const payload = {
+    model: model || OPENAI_SUMMARY_MODEL_ID,
+    input: buildOpenAiTitleInput(summary),
+    reasoning: { effort: normalizeSummaryReasoning(reasoning) },
+  };
+  const response = await fetch(OPENAI_SUMMARY_ENDPOINT, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    const parsedMessage = extractApiErrorMessage(errorText);
+    const message = parsedMessage || errorText || "Erreur API OpenAI.";
+    throw new Error(message.trim());
+  }
+
+  const data = await response.json();
+  const content = extractOpenAiResponseText(data);
+  if (!content) {
+    throw new Error("Réponse de titre vide.");
+  }
+  return {
+    text: content,
+    usage: data.usage,
+  };
+}
+
 async function summarizeTranscript() {
   const apiKey = elements.openAiKey?.value?.trim() || "";
   const transcriptText = elements.transcript.value.trim();
@@ -680,6 +758,7 @@ async function summarizeTranscript() {
   }
 
   state.summaryProcessing = true;
+  setSummaryTitle("");
   updateSummaryControls();
   setStatus("Synthèse en cours...");
 
@@ -691,7 +770,21 @@ async function summarizeTranscript() {
       reasoning: summaryReasoning,
     });
     setSummaryText(result.text);
-    setStatus("Synthèse générée.");
+    let titleMessage = "";
+    try {
+      const titleResult = await requestOpenAiTitle({
+        apiKey,
+        summary: result.text,
+        model: summaryModel,
+        reasoning: summaryReasoning,
+      });
+      setSummaryTitle(titleResult.text);
+      updateActiveHistoryTitle(titleResult.text);
+      titleMessage = " Titre mis à jour.";
+    } catch (titleError) {
+      titleMessage = " Titre indisponible.";
+    }
+    setStatus(`Synthèse générée.${titleMessage}`);
   } catch (error) {
     setStatus("Erreur pendant la synthèse.");
     const message = error instanceof Error ? error.message : String(error);
@@ -709,6 +802,187 @@ function buildSummaryFilename() {
   return `${safeBase}-synthese-${date}.pdf`;
 }
 
+function parseSummaryBlocks(text) {
+  const lines = String(text || "").split(/\r?\n/);
+  const blocks = [];
+  let lastWasSpacer = false;
+  lines.forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      if (!lastWasSpacer) {
+        blocks.push({ type: "spacer" });
+        lastWasSpacer = true;
+      }
+      return;
+    }
+    lastWasSpacer = false;
+    const headingMatch = trimmed.match(/^(#{1,2})\s+(.*)$/);
+    if (headingMatch) {
+      const level = headingMatch[1].length;
+      let headingText = headingMatch[2].trim();
+      headingText = headingText.replace(/^\[|\]$/g, "").replace(/:\s*$/, "");
+      blocks.push({ type: level === 1 ? "h1" : "h2", text: headingText });
+      return;
+    }
+    if (/^(Key points|Summary|Todolist)\s*:/i.test(trimmed)) {
+      blocks.push({ type: "h1", text: trimmed.replace(/:\s*$/, "") });
+      return;
+    }
+    if (/^\d+\.\s+/.test(trimmed)) {
+      blocks.push({ type: "h2", text: trimmed });
+      return;
+    }
+    if (/^[-•]\s+/.test(trimmed)) {
+      blocks.push({ type: "bullet", text: trimmed.replace(/^[-•]\s+/, "") });
+      return;
+    }
+    blocks.push({ type: "paragraph", text: trimmed });
+  });
+  return blocks;
+}
+
+function tokenizeBold(text) {
+  const tokens = [];
+  let bold = false;
+  let buffer = "";
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] === "*" && text[i + 1] === "*") {
+      if (buffer) {
+        tokens.push({ text: buffer, bold });
+        buffer = "";
+      }
+      bold = !bold;
+      i += 1;
+      continue;
+    }
+    buffer += text[i];
+  }
+  if (buffer) {
+    tokens.push({ text: buffer, bold });
+  }
+  return tokens;
+}
+
+function splitTokensIntoPieces(tokens) {
+  const pieces = [];
+  tokens.forEach((token) => {
+    token.text.split(/(\s+)/).forEach((part) => {
+      if (!part) return;
+      pieces.push({ text: part, bold: token.bold });
+    });
+  });
+  return pieces;
+}
+
+function wrapPieces(doc, pieces, maxWidth, fontSize) {
+  const lines = [];
+  let current = [];
+  let width = 0;
+
+  const measure = (piece) => {
+    doc.setFont("helvetica", piece.bold ? "bold" : "normal");
+    doc.setFontSize(fontSize);
+    return doc.getTextWidth(piece.text);
+  };
+
+  const pushLine = () => {
+    if (current.length) {
+      lines.push(current);
+      current = [];
+      width = 0;
+    }
+  };
+
+  pieces.forEach((piece) => {
+    const isWhitespace = piece.text.trim() === "";
+    if (isWhitespace && !current.length) {
+      return;
+    }
+    const pieceWidth = measure(piece);
+    if (pieceWidth > maxWidth && !isWhitespace) {
+      pushLine();
+      const parts = doc.splitTextToSize(piece.text, maxWidth);
+      parts.forEach((part) => {
+        const partPiece = { text: part, bold: piece.bold };
+        const partWidth = measure(partPiece);
+        current = [partPiece];
+        width = partWidth;
+        pushLine();
+      });
+      return;
+    }
+    if (width + pieceWidth > maxWidth && current.length) {
+      pushLine();
+      if (isWhitespace) {
+        return;
+      }
+    }
+    current.push(piece);
+    width += pieceWidth;
+  });
+
+  pushLine();
+  return lines;
+}
+
+function renderLineTokens(doc, line, x, y, fontSize) {
+  let cursorX = x;
+  line.forEach((piece) => {
+    doc.setFont("helvetica", piece.bold ? "bold" : "normal");
+    doc.setFontSize(fontSize);
+    doc.text(piece.text, cursorX, y);
+    cursorX += doc.getTextWidth(piece.text);
+  });
+}
+
+function renderRichTextBlock({ doc, text, x, y, maxWidth, fontSize, lineHeight, margin }) {
+  const pieces = splitTokensIntoPieces(tokenizeBold(text));
+  const lines = wrapPieces(doc, pieces, maxWidth, fontSize);
+  const pageHeight = doc.internal.pageSize.getHeight();
+  let cursorY = y;
+  let firstLineY = null;
+  lines.forEach((line) => {
+    if (cursorY + lineHeight > pageHeight - margin) {
+      doc.addPage();
+      cursorY = margin;
+    }
+    if (firstLineY === null) {
+      firstLineY = cursorY;
+    }
+    renderLineTokens(doc, line, x, cursorY, fontSize);
+    cursorY += lineHeight;
+  });
+  return { y: cursorY, firstLineY };
+}
+
+function renderPlainTextBlock({
+  doc,
+  text,
+  x,
+  y,
+  maxWidth,
+  fontSize,
+  fontStyle,
+  lineHeight,
+  margin,
+}) {
+  const pageHeight = doc.internal.pageSize.getHeight();
+  doc.setFont("helvetica", fontStyle || "normal");
+  doc.setFontSize(fontSize);
+  const cleaned = stripBoldMarkers(text);
+  const lines = doc.splitTextToSize(cleaned, maxWidth);
+  let cursorY = y;
+  lines.forEach((line) => {
+    if (cursorY + lineHeight > pageHeight - margin) {
+      doc.addPage();
+      cursorY = margin;
+    }
+    doc.text(line, x, cursorY);
+    cursorY += lineHeight;
+  });
+  return cursorY;
+}
+
 function downloadSummaryPdf() {
   const summaryText = state.summaryText.trim();
   if (!summaryText) return;
@@ -718,34 +992,119 @@ function downloadSummaryPdf() {
     return;
   }
   const doc = new jsPDF({ unit: "pt", format: "a4" });
-  const margin = 48;
+  const margin = 56;
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
-  const fontSize = 11;
-  const lineHeight = Math.round(fontSize * 1.5);
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(fontSize);
+  const contentWidth = pageWidth - margin * 2;
+  const title = state.summaryTitle || "Synthèse";
 
-  const cleanText = stripBoldMarkers(summaryText);
-  const maxWidth = pageWidth - margin * 2;
-  const blocks = cleanText.split(/\r?\n/);
-  const lines = [];
-  blocks.forEach((block) => {
-    if (!block) {
-      lines.push("");
-      return;
-    }
-    lines.push(...doc.splitTextToSize(block, maxWidth));
-  });
   let cursorY = margin;
-  lines.forEach((line) => {
-    if (cursorY + lineHeight > pageHeight - margin) {
+
+  cursorY = renderPlainTextBlock({
+    doc,
+    text: title,
+    x: margin,
+    y: cursorY,
+    maxWidth: contentWidth,
+    fontSize: 18,
+    fontStyle: "bold",
+    lineHeight: 24,
+    margin,
+  });
+
+  doc.setDrawColor(30, 30, 30);
+  doc.setLineWidth(0.6);
+  doc.line(margin, cursorY + 6, pageWidth - margin, cursorY + 6);
+  cursorY += 18;
+
+  const blocks = parseSummaryBlocks(summaryText);
+  const bodySize = 11;
+  const bodyLineHeight = 16;
+  const h1Size = 14;
+  const h1LineHeight = 20;
+  const h2Size = 12;
+  const h2LineHeight = 18;
+  const bulletIndent = 14;
+
+  const addSpacing = (amount) => {
+    if (cursorY + amount > pageHeight - margin) {
       doc.addPage();
       cursorY = margin;
+      return;
     }
-    doc.text(line, margin, cursorY);
-    cursorY += lineHeight;
+    cursorY += amount;
+  };
+
+  blocks.forEach((block) => {
+    if (block.type === "spacer") {
+      addSpacing(6);
+      return;
+    }
+    if (block.type === "h1") {
+      addSpacing(8);
+      cursorY = renderPlainTextBlock({
+        doc,
+        text: block.text,
+        x: margin,
+        y: cursorY,
+        maxWidth: contentWidth,
+        fontSize: h1Size,
+        fontStyle: "bold",
+        lineHeight: h1LineHeight,
+        margin,
+      });
+      addSpacing(4);
+      return;
+    }
+    if (block.type === "h2") {
+      addSpacing(6);
+      cursorY = renderPlainTextBlock({
+        doc,
+        text: block.text,
+        x: margin,
+        y: cursorY,
+        maxWidth: contentWidth,
+        fontSize: h2Size,
+        fontStyle: "bold",
+        lineHeight: h2LineHeight,
+        margin,
+      });
+      addSpacing(2);
+      return;
+    }
+    if (block.type === "bullet") {
+      const bulletX = margin;
+      const textX = margin + bulletIndent;
+      const rendered = renderRichTextBlock({
+        doc,
+        text: block.text,
+        x: textX,
+        y: cursorY,
+        maxWidth: contentWidth - bulletIndent,
+        fontSize: bodySize,
+        lineHeight: bodyLineHeight,
+        margin,
+      });
+      const bulletY = rendered.firstLineY ?? cursorY;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(bodySize);
+      doc.text("•", bulletX, bulletY);
+      cursorY = rendered.y + 2;
+      return;
+    }
+    cursorY = renderRichTextBlock({
+      doc,
+      text: block.text,
+      x: margin,
+      y: cursorY,
+      maxWidth: contentWidth,
+      fontSize: bodySize,
+      lineHeight: bodyLineHeight,
+      margin,
+    }).y;
+    addSpacing(2);
   });
+
   doc.save(buildSummaryFilename());
   setStatus("Synthèse PDF téléchargée.");
 }
