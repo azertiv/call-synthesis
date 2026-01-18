@@ -6,6 +6,14 @@
     <meta name="color-scheme" content="light dark" />
     <title>Neurow.Transcribe</title>
     <meta name="description" content="Transcription audio locale avec Mistral." />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f5efe4" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0f1117" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Neurow.Transcribe" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" type="image/png" href="assets/icon-192.png" sizes="192x192" />
+    <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" sizes="180x180" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -25,189 +33,7 @@
         </div>
       </div>
     </div>
-    <header class="hero">
-      <div class="hero-top">
-        <div class="hero-left">
-          <button
-            class="menu-toggle"
-            id="historyToggle"
-            type="button"
-            aria-label="Ouvrir l'historique"
-            aria-controls="historyPanel"
-            aria-expanded="false"
-            title="Ouvrir l'historique"
-          >
-            <svg class="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M4 7h16" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8" />
-              <path d="M4 12h16" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8" />
-              <path d="M4 17h16" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8" />
-            </svg>
-            <span class="sr-only">Ouvrir l'historique</span>
-          </button>
-          <div class="brand">
-            <span class="brand-dot"></span>
-            <span>Neurow.Transcribe</span>
-          </div>
-        </div>
-        <div class="hero-controls">
-          <div class="theme-switch" role="group" aria-label="Mode d'affichage">
-            <button
-              class="theme-btn"
-              type="button"
-              data-theme-choice="system"
-              aria-pressed="true"
-              title="Mode système"
-            >
-              <svg class="theme-icon" viewBox="0 0 24 24" aria-hidden="true">
-                <rect x="3" y="4.5" width="18" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.6" />
-                <path d="M8 20h8" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-                <path d="M12 16.5v3.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-              </svg>
-              <span class="sr-only">Système</span>
-            </button>
-            <button
-              class="theme-btn"
-              type="button"
-              data-theme-choice="light"
-              aria-pressed="false"
-              title="Mode clair"
-            >
-              <svg class="theme-icon" viewBox="0 0 24 24" aria-hidden="true">
-                <circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6" />
-                <path d="M12 3v2.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-                <path d="M12 18.5V21" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-                <path d="M4.2 6.2l1.8 1.8" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-                <path d="M18 18l1.8 1.8" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-                <path d="M3 12h2.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-                <path d="M18.5 12H21" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-                <path d="M4.2 17.8l1.8-1.8" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-                <path d="M18 6l1.8-1.8" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-              </svg>
-              <span class="sr-only">Clair</span>
-            </button>
-            <button
-              class="theme-btn"
-              type="button"
-              data-theme-choice="dark"
-              aria-pressed="false"
-              title="Mode sombre"
-            >
-              <svg class="theme-icon" viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  d="M20 14.5A7.5 7.5 0 1 1 9.5 4 6.5 6.5 0 0 0 20 14.5Z"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="1.6"
-                />
-              </svg>
-              <span class="sr-only">Sombre</span>
-            </button>
-          </div>
-          <details class="settings" id="settingsPanel">
-            <summary class="settings-toggle" title="Paramètres">
-              <svg class="theme-icon" viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  d="M12 8.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7Z"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.6"
-                />
-                <path
-                  d="M4.8 13.2l-1.2-2.1 2-1.2a7.8 7.8 0 0 1 0-1.8l-2-1.2 1.2-2.1 2.2.6a8 8 0 0 1 1.5-1.1l-.3-2.2h2.4l-.3 2.2a8 8 0 0 1 1.5 1.1l2.2-.6 1.2 2.1-2 1.2a7.8 7.8 0 0 1 0 1.8l2 1.2-1.2 2.1-2.2-.6a8 8 0 0 1-1.5 1.1l.3 2.2h-2.4l.3-2.2a8 8 0 0 1-1.5-1.1l-2.2.6Z"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-linejoin="round"
-                  stroke-width="1.2"
-                />
-              </svg>
-              <span class="sr-only">Paramètres</span>
-            </summary>
-            <div class="settings-card">
-              <div class="settings-title">
-                <span class="section-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M4 7h10" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-                    <path d="M4 17h10" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-                    <circle cx="17" cy="7" r="2.5" fill="none" stroke="currentColor" stroke-width="1.6" />
-                    <circle cx="17" cy="17" r="2.5" fill="none" stroke="currentColor" stroke-width="1.6" />
-                  </svg>
-                </span>
-                <span>Paramètres</span>
-              </div>
-              <label class="field">
-                <span>Clé API (Mistral)</span>
-                <input
-                  type="password"
-                  id="apiKey"
-                  autocomplete="off"
-                  placeholder="sk-..."
-                  spellcheck="false"
-                />
-              </label>
-              <div class="row">
-                <label class="toggle">
-                  <input type="checkbox" id="rememberKey" />
-                  <span>Mémoriser sur cet appareil</span>
-                </label>
-                <button class="ghost" id="clearKey">Effacer</button>
-              </div>
-              <label class="field">
-                <span>Langue (optionnel)</span>
-                <select id="language">
-                  <option value="">Automatique</option>
-                  <option value="fr">Français</option>
-                  <option value="en">Anglais</option>
-                </select>
-              </label>
-              <label class="toggle">
-                <input type="checkbox" id="streamingToggle" />
-                <span>Streaming SSE (affichage en direct)</span>
-              </label>
-              <label class="field">
-                <span>Clé API (OpenAI)</span>
-                <input
-                  type="password"
-                  id="openAiKey"
-                  autocomplete="off"
-                  placeholder="sk-..."
-                  spellcheck="false"
-                />
-              </label>
-              <div class="row">
-                <label class="toggle">
-                  <input type="checkbox" id="rememberOpenAiKey" />
-                  <span>Mémoriser sur cet appareil</span>
-                </label>
-                <button class="ghost" id="clearOpenAiKey">Effacer</button>
-              </div>
-              <label class="field">
-                <span>Modèle de synthèse (OpenAI)</span>
-                <select id="summaryModel">
-                  <option value="gpt-5-mini" selected>GPT-5 mini</option>
-                  <option value="gpt-5-nano">GPT-5 nano</option>
-                </select>
-              </label>
-              <label class="field">
-                <span>Raisonnement (OpenAI)</span>
-                <select id="summaryReasoning">
-                  <option value="high">Élevé</option>
-                  <option value="medium" selected>Moyen</option>
-                  <option value="low">Faible</option>
-                </select>
-              </label>
-            </div>
-          </details>
-        </div>
-      </div>
-      <div class="hero-text">
-        <h1>Neurow.Transcribe</h1>
-        <p>De l'audio à la synthèse, un parcours clair en 4 étapes avec historique local et export immédiat.</p>
-      </div>
-    </header>
-
-    <main class="workspace">
+    <div class="dashboard">
       <aside class="panel history-panel" id="historyPanel" aria-hidden="false" aria-label="Historique">
         <div class="history-header">
           <div class="history-heading">
@@ -250,51 +76,203 @@
         </div>
       </aside>
 
-      <div class="flow">
-        <div class="flow-head">
-          <div class="flow-title">
-            <span class="flow-kicker">Parcours guidé</span>
-            <h2>De l'audio à la synthèse, en 4 étapes</h2>
-            <p>Glissez votre fichier, suivez l'avancement, puis récupérez transcription et synthèse.</p>
+      <div class="dashboard-main">
+        <header class="topbar">
+          <div class="topbar-left">
+            <button
+              class="menu-toggle"
+              id="historyToggle"
+              type="button"
+              aria-label="Ouvrir l'historique"
+              aria-controls="historyPanel"
+              aria-expanded="false"
+              title="Ouvrir l'historique"
+            >
+              <svg class="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 7h16" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8" />
+                <path d="M4 12h16" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8" />
+                <path d="M4 17h16" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8" />
+              </svg>
+              <span class="sr-only">Ouvrir l'historique</span>
+            </button>
+            <div class="brand">
+              <span class="brand-dot"></span>
+              <h1 class="brand-title">Neurow.Transcribe</h1>
+            </div>
           </div>
-          <ol class="flow-steps" aria-label="Étapes du parcours">
-            <li class="flow-step">
-              <span class="flow-step-index">01</span>
-              <span class="flow-step-label">Importer</span>
-            </li>
-            <li class="flow-step">
-              <span class="flow-step-index">02</span>
-              <span class="flow-step-label">Suivre</span>
-            </li>
-            <li class="flow-step">
-              <span class="flow-step-index">03</span>
-              <span class="flow-step-label">Transcrire</span>
-            </li>
-            <li class="flow-step">
-              <span class="flow-step-index">04</span>
-              <span class="flow-step-label">Synthétiser</span>
-            </li>
-          </ol>
-        </div>
-
-        <div class="flow-grid">
-          <section class="panel step-card upload">
-            <div class="panel-header">
-              <div class="panel-title">
-                <span class="step-index" aria-hidden="true">01</span>
-                <div class="panel-title-text">
-                  <span class="step-kicker">Étape 1</span>
-                  <h2>Importer un fichier audio</h2>
-                  <p class="panel-subtitle">Glissez votre fichier ou cliquez pour sélectionner.</p>
-                </div>
-              </div>
-              <span class="section-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M12 16V4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-                  <path d="M7 9l5-5 5 5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-                  <path d="M5 20h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+          <div class="topbar-right">
+            <details class="settings" id="settingsPanel">
+              <summary class="settings-toggle" title="Paramètres">
+                <svg class="theme-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M12 8.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7Z"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                  />
+                  <path
+                    d="M4.8 13.2l-1.2-2.1 2-1.2a7.8 7.8 0 0 1 0-1.8l-2-1.2 1.2-2.1 2.2.6a8 8 0 0 1 1.5-1.1l-.3-2.2h2.4l-.3 2.2a8 8 0 0 1 1.5 1.1l2.2-.6 1.2 2.1-2 1.2a7.8 7.8 0 0 1 0 1.8l2 1.2-1.2 2.1-2.2-.6a8 8 0 0 1-1.5 1.1l.3 2.2h-2.4l.3-2.2a8 8 0 0 1-1.5-1.1l-2.2.6Z"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-linejoin="round"
+                    stroke-width="1.2"
+                  />
                 </svg>
-              </span>
+                <span class="sr-only">Paramètres</span>
+              </summary>
+              <div class="settings-card">
+                <div class="settings-title">
+                  <span class="section-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M4 7h10" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                      <path d="M4 17h10" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                      <circle cx="17" cy="7" r="2.5" fill="none" stroke="currentColor" stroke-width="1.6" />
+                      <circle cx="17" cy="17" r="2.5" fill="none" stroke="currentColor" stroke-width="1.6" />
+                    </svg>
+                  </span>
+                  <span>Paramètres</span>
+                </div>
+                <div class="field">
+                  <span>Mode d'affichage</span>
+                  <div class="theme-switch" role="group" aria-label="Mode d'affichage">
+                    <button
+                      class="theme-btn"
+                      type="button"
+                      data-theme-choice="system"
+                      aria-pressed="true"
+                      title="Mode système"
+                    >
+                      <svg class="theme-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <rect x="3" y="4.5" width="18" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.6" />
+                        <path d="M8 20h8" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                        <path d="M12 16.5v3.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                      </svg>
+                      <span class="sr-only">Système</span>
+                    </button>
+                    <button
+                      class="theme-btn"
+                      type="button"
+                      data-theme-choice="light"
+                      aria-pressed="false"
+                      title="Mode clair"
+                    >
+                      <svg class="theme-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6" />
+                        <path d="M12 3v2.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                        <path d="M12 18.5V21" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                        <path d="M4.2 6.2l1.8 1.8" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                        <path d="M18 18l1.8 1.8" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                        <path d="M3 12h2.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                        <path d="M18.5 12H21" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                        <path d="M4.2 17.8l1.8-1.8" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                        <path d="M18 6l1.8-1.8" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                      </svg>
+                      <span class="sr-only">Clair</span>
+                    </button>
+                    <button
+                      class="theme-btn"
+                      type="button"
+                      data-theme-choice="dark"
+                      aria-pressed="false"
+                      title="Mode sombre"
+                    >
+                      <svg class="theme-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          d="M20 14.5A7.5 7.5 0 1 1 9.5 4 6.5 6.5 0 0 0 20 14.5Z"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="1.6"
+                        />
+                      </svg>
+                      <span class="sr-only">Sombre</span>
+                    </button>
+                  </div>
+                </div>
+                <label class="field">
+                  <span>Clé API (Mistral)</span>
+                  <input
+                    type="password"
+                    id="apiKey"
+                    autocomplete="off"
+                    placeholder="sk-..."
+                    spellcheck="false"
+                  />
+                </label>
+                <div class="row">
+                  <label class="toggle">
+                    <input type="checkbox" id="rememberKey" />
+                    <span>Mémoriser sur cet appareil</span>
+                  </label>
+                  <button class="ghost" id="clearKey">Effacer</button>
+                </div>
+                <label class="field">
+                  <span>Langue (optionnel)</span>
+                  <select id="language">
+                    <option value="">Automatique</option>
+                    <option value="fr">Français</option>
+                    <option value="en">Anglais</option>
+                  </select>
+                </label>
+                <label class="toggle">
+                  <input type="checkbox" id="streamingToggle" />
+                  <span>Streaming SSE (affichage en direct)</span>
+                </label>
+                <label class="field">
+                  <span>Clé API (OpenAI)</span>
+                  <input
+                    type="password"
+                    id="openAiKey"
+                    autocomplete="off"
+                    placeholder="sk-..."
+                    spellcheck="false"
+                  />
+                </label>
+                <div class="row">
+                  <label class="toggle">
+                    <input type="checkbox" id="rememberOpenAiKey" />
+                    <span>Mémoriser sur cet appareil</span>
+                  </label>
+                  <button class="ghost" id="clearOpenAiKey">Effacer</button>
+                </div>
+                <label class="field">
+                  <span>Modèle de synthèse (OpenAI)</span>
+                  <select id="summaryModel">
+                    <option value="gpt-5-mini" selected>GPT-5 mini</option>
+                    <option value="gpt-5-nano">GPT-5 nano</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Raisonnement (OpenAI)</span>
+                  <select id="summaryReasoning">
+                    <option value="high">Élevé</option>
+                    <option value="medium" selected>Moyen</option>
+                    <option value="low">Faible</option>
+                  </select>
+                </label>
+              </div>
+            </details>
+          </div>
+        </header>
+
+        <main class="content">
+          <section class="panel upload">
+            <div class="panel-header">
+              <div class="panel-heading">
+                <div class="panel-title-row">
+                  <span class="panel-number">01</span>
+                  <span class="section-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M12 16V4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                      <path d="M7 9l5-5 5 5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                      <path d="M5 20h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                    </svg>
+                  </span>
+                  <h2>Importer un fichier audio</h2>
+                </div>
+                <p class="panel-subtitle">Glissez votre fichier ou cliquez pour sélectionner.</p>
+              </div>
             </div>
             <div class="dropzone" id="dropzone">
               <input type="file" id="fileInput" accept="audio/*" />
@@ -316,28 +294,27 @@
             </div>
           </section>
 
-          <section class="panel step-card status">
+          <section class="panel status">
             <div class="panel-header">
-              <div class="panel-title">
-                <span class="step-index" aria-hidden="true">02</span>
-                <div class="panel-title-text">
-                  <span class="step-kicker">Étape 2</span>
+              <div class="panel-heading">
+                <div class="panel-title-row">
+                  <span class="panel-number">02</span>
+                  <span class="section-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path
+                        d="M3 12h4l2.5-5 4 10 2-5H21"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="1.6"
+                      />
+                    </svg>
+                  </span>
                   <h2>Statut &amp; usage</h2>
-                  <p class="panel-subtitle">Suivez l'avancement, les segments et l'estimation.</p>
                 </div>
+                <p class="panel-subtitle">Suivez l'avancement, les segments et l'estimation.</p>
               </div>
-              <span class="section-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path
-                    d="M3 12h4l2.5-5 4 10 2-5H21"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="1.6"
-                  />
-                </svg>
-              </span>
             </div>
             <div class="progress-block" id="progressBlock" hidden>
               <div class="progress-header">
@@ -424,7 +401,6 @@
                         fill="none"
                         stroke="currentColor"
                         stroke-linecap="round"
-                        stroke-linejoin="round"
                         stroke-width="1.6"
                       />
                       <path
@@ -447,23 +423,22 @@
             </div>
           </section>
 
-          <section class="panel step-card output span-full">
+          <section class="panel output">
             <div class="panel-header">
-              <div class="panel-title">
-                <span class="step-index" aria-hidden="true">03</span>
-                <div class="panel-title-text">
-                  <span class="step-kicker">Étape 3</span>
+              <div class="panel-heading">
+                <div class="panel-title-row">
+                  <span class="panel-number">03</span>
+                  <span class="section-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M5 6h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                      <path d="M5 12h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                      <path d="M5 18h9" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                    </svg>
+                  </span>
                   <h2>Transcription</h2>
-                  <p class="panel-subtitle">Relisez, copiez ou téléchargez la transcription complète.</p>
                 </div>
+                <p class="panel-subtitle">Relisez, copiez ou téléchargez la transcription complète.</p>
               </div>
-              <span class="section-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M5 6h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-                  <path d="M5 12h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-                  <path d="M5 18h9" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-                </svg>
-              </span>
             </div>
             <textarea id="transcript" placeholder="La transcription apparaîtra ici..." readonly></textarea>
             <div class="row end">
@@ -472,23 +447,26 @@
             </div>
           </section>
 
-          <section class="panel step-card summary span-full">
+          <section class="panel summary">
             <div class="panel-header">
-              <div class="panel-title">
-                <span class="step-index" aria-hidden="true">04</span>
-                <div class="panel-title-text">
-                  <span class="step-kicker">Étape 4</span>
+              <div class="panel-heading">
+                <div class="panel-title-row">
+                  <span class="panel-number">04</span>
+                  <span class="section-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M6 6h12" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                      <path d="M6 12h9" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                      <path d="M6 18h7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                    </svg>
+                  </span>
                   <h2>Synthèse</h2>
-                  <p class="panel-subtitle">Générez une synthèse claire et exportez en PDF.</p>
                 </div>
+                <p class="panel-subtitle">Générez une synthèse claire et exportez en PDF.</p>
               </div>
-              <div class="panel-actions summary-actions">
+              <div class="panel-actions">
                 <button class="primary" id="summarizeBtn" disabled>Générer la synthèse</button>
                 <button class="ghost" id="downloadSummaryBtn" disabled>Télécharger PDF</button>
               </div>
-            </div>
-            <div class="summary-output is-empty" id="summaryOutput" aria-live="polite">
-              La synthèse apparaîtra ici...
             </div>
             <div class="summary-title-row" id="summaryTitleRow" hidden>
               <label class="field">
@@ -496,10 +474,14 @@
                 <input type="text" id="summaryTitleInput" placeholder="Titre de la synthèse" />
               </label>
             </div>
+            <div class="summary-output is-empty" id="summaryOutput" aria-live="polite">
+              La synthèse apparaîtra ici...
+            </div>
           </section>
-        </div>
+        </main>
       </div>
-    </main>
+    </div>
+
 
     <script src="vendor/ffmpeg/ffmpeg.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
