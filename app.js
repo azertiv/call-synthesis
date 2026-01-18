@@ -1,10 +1,12 @@
 const MODEL_ID = "voxtral-mini-latest";
-const SUMMARY_MODEL_ID = "mistral-small-latest";
+const SUMMARY_MODEL_ID = "mistral-medium-latest";
 const SUMMARY_ENDPOINT = "https://api.mistral.ai/v1/chat/completions";
+const SUMMARY_MODEL_STORAGE = "callSynthesis.summaryModel";
 const PROVIDER_CONFIG = {
   label: "Mistral",
   endpoint: "https://api.mistral.ai/v1/audio/transcriptions",
 };
+const STREAMING_TIMESTAMP_GRANULARITIES = ["segment"];
 const MAX_PARALLEL_REQUESTS = 3;
 const SEGMENT_TARGET_MINUTES = 12;
 const SEGMENT_TARGET_SECONDS = SEGMENT_TARGET_MINUTES * 60;
@@ -59,6 +61,7 @@ const elements = {
   summarizeBtn: document.getElementById("summarizeBtn"),
   downloadSummaryBtn: document.getElementById("downloadSummaryBtn"),
   summaryOutput: document.getElementById("summaryOutput"),
+  summaryModel: document.getElementById("summaryModel"),
   tokensInput: document.getElementById("tokensInput"),
   tokensOutput: document.getElementById("tokensOutput"),
   tokensTotal: document.getElementById("tokensTotal"),
@@ -308,7 +311,7 @@ function setProgressStatus(message) {
   elements.statusLog.scrollTop = elements.statusLog.scrollHeight;
 }
 
-function setProgressBar({ label, current, total }) {
+function setProgressBar({ label, current, total, meta }) {
   if (!elements.progressBlock || !elements.progressTrack || !elements.progressFill) return;
   const safeTotal = Number.isFinite(total) && total > 0 ? total : 0;
   const safeCurrent = Number.isFinite(current) ? Math.max(0, current) : 0;
@@ -322,9 +325,13 @@ function setProgressBar({ label, current, total }) {
     elements.progressValue.textContent = `${percent}%`;
   }
   if (elements.progressMeta) {
-    elements.progressMeta.textContent = safeTotal
-      ? `${clampedCurrent}/${safeTotal} segment${safeTotal > 1 ? "s" : ""}`
-      : "Preparation...";
+    if (meta) {
+      elements.progressMeta.textContent = meta;
+    } else {
+      elements.progressMeta.textContent = safeTotal
+        ? `${clampedCurrent}/${safeTotal} segment${safeTotal > 1 ? "s" : ""}`
+        : "Preparation...";
+    }
   }
   elements.progressTrack.setAttribute("aria-valuenow", String(percent));
   elements.progressFill.style.width = `${percent}%`;
@@ -344,6 +351,52 @@ function resetProgressBar() {
   if (elements.progressLabel) {
     elements.progressLabel.textContent = "Transcription en cours";
   }
+}
+
+function buildProgressState(chunks) {
+  const durations = chunks.map((chunk) =>
+    Number(chunk?.baseDurationSeconds ?? chunk?.durationSeconds ?? 0),
+  );
+  const hasDuration = durations.every(
+    (duration) => Number.isFinite(duration) && duration > 0,
+  );
+  const weights = hasDuration ? durations : new Array(chunks.length).fill(1);
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0) || chunks.length || 1;
+  return {
+    weights,
+    totalWeight,
+    hasDuration,
+    progress: new Array(chunks.length).fill(0),
+  };
+}
+
+function createProgressUpdater(progressState, label) {
+  let scheduled = false;
+  const render = () => {
+    scheduled = false;
+    const progressWeight = progressState.progress.reduce(
+      (sum, progress, index) => sum + progress * progressState.weights[index],
+      0,
+    );
+    const meta = progressState.hasDuration
+      ? `${formatDuration(progressWeight)} / ${formatDuration(progressState.totalWeight)}`
+      : null;
+    setProgressBar({
+      label,
+      current: progressWeight,
+      total: progressState.totalWeight,
+      meta,
+    });
+  };
+  return (force = false) => {
+    if (force) {
+      render();
+      return;
+    }
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(render);
+  };
 }
 
 function setProcessing(isProcessing) {
@@ -540,7 +593,7 @@ ${transcript}`;
   ];
 }
 
-async function requestSummary({ apiKey, transcript }) {
+async function requestSummary({ apiKey, transcript, model }) {
   const response = await fetch(SUMMARY_ENDPOINT, {
     method: "POST",
     headers: {
@@ -548,7 +601,7 @@ async function requestSummary({ apiKey, transcript }) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: SUMMARY_MODEL_ID,
+      model: model || SUMMARY_MODEL_ID,
       messages: buildSummaryMessages(transcript),
       temperature: 0.2,
     }),
@@ -575,6 +628,7 @@ async function requestSummary({ apiKey, transcript }) {
 async function summarizeTranscript() {
   const apiKey = elements.apiKey.value.trim();
   const transcriptText = elements.transcript.value.trim();
+  const summaryModel = elements.summaryModel?.value?.trim() || SUMMARY_MODEL_ID;
 
   if (!apiKey) {
     clearStatus();
@@ -594,7 +648,11 @@ async function summarizeTranscript() {
   setStatus("Synthèse en cours...");
 
   try {
-    const result = await requestSummary({ apiKey, transcript: transcriptText });
+    const result = await requestSummary({
+      apiKey,
+      transcript: transcriptText,
+      model: summaryModel,
+    });
     setSummaryText(result.text);
     setStatus("Synthèse générée.");
   } catch (error) {
@@ -1345,7 +1403,7 @@ async function readSseStream(response, { signal, onEvent }) {
   }
 }
 
-async function readTranscriptionStream(response, { signal, onPartial }) {
+async function readTranscriptionStream(response, { signal, onPartial, onProgress }) {
   let partialText = "";
   let finalPayload = null;
   let hasTextDelta = false;
@@ -1366,8 +1424,13 @@ async function readTranscriptionStream(response, { signal, onPartial }) {
         }
         return;
       }
-      if (type === "transcription.segment" && !hasTextDelta) {
-        if (typeof data.text === "string") {
+      if (type === "transcription.segment") {
+        if (typeof data.end === "number") {
+          if (onProgress) {
+            onProgress(data.end);
+          }
+        }
+        if (!hasTextDelta && typeof data.text === "string") {
           segmentTexts.push(data.text);
           partialText = segmentTexts.join(" ");
           if (onPartial) {
@@ -1610,6 +1673,7 @@ async function ffmpegSegmentByDuration(file, durationSeconds, options = {}) {
       ]);
       const data = await ffmpeg.readFile(outputName);
       await ffmpeg.deleteFile(outputName);
+      const baseDuration = Math.max(0, segment.baseEndSeconds - segment.baseStartSeconds);
       chunks.push({
         blob: new Blob([data], { type: mimeType }),
         index: segment.index,
@@ -1617,6 +1681,9 @@ async function ffmpegSegmentByDuration(file, durationSeconds, options = {}) {
         startSeconds: segment.startSeconds,
         endSeconds: segment.endSeconds,
         durationSeconds: segmentDuration,
+        baseDurationSeconds: baseDuration,
+        baseStartSeconds: segment.baseStartSeconds,
+        baseEndSeconds: segment.baseEndSeconds,
       });
     }
   } finally {
@@ -1651,7 +1718,19 @@ async function prepareFile(file, options = {}) {
   if (duration <= SEGMENT_TARGET_SECONDS) {
     setStatus("Fichier accepté sans découpage.");
     return {
-      chunks: [{ blob: file, index: 1, isOriginal: true, durationSeconds: duration }],
+      chunks: [
+        {
+          blob: file,
+          index: 1,
+          isOriginal: true,
+          startSeconds: 0,
+          endSeconds: duration,
+          durationSeconds: duration,
+          baseDurationSeconds: duration,
+          baseStartSeconds: 0,
+          baseEndSeconds: duration,
+        },
+      ],
       totalSize: file.size,
       usedOriginal: true,
     };
@@ -1705,6 +1784,7 @@ async function transcribeChunk({
   language,
   stream,
   onPartial,
+  onProgress,
   chunk,
   chunkIndex,
   totalChunks,
@@ -1724,6 +1804,9 @@ async function transcribeChunk({
   }
   if (stream) {
     formData.append("stream", "true");
+    STREAMING_TIMESTAMP_GRANULARITIES.forEach((granularity) => {
+      formData.append("timestamp_granularities", granularity);
+    });
   }
 
   let response;
@@ -1767,7 +1850,41 @@ async function transcribeChunk({
     return data;
   }
 
-  return readTranscriptionStream(response, { signal, onPartial });
+  const durationSeconds = Number(chunk?.durationSeconds ?? 0);
+  const baseDurationSeconds = Number(chunk?.baseDurationSeconds ?? 0);
+  const baseStartSeconds = Number(chunk?.baseStartSeconds ?? 0);
+  const baseEndSeconds = Number(chunk?.baseEndSeconds ?? baseStartSeconds + baseDurationSeconds);
+  const chunkStartSeconds = Number(chunk?.startSeconds ?? 0);
+  const progressHandler =
+    onProgress &&
+    Number.isFinite(durationSeconds) &&
+    durationSeconds > 0 &&
+    Number.isFinite(chunkStartSeconds)
+      ? (elapsedSeconds) => {
+          if (
+            Number.isFinite(baseDurationSeconds) &&
+            baseDurationSeconds > 0 &&
+            Number.isFinite(baseEndSeconds)
+          ) {
+            const absoluteEnd = chunkStartSeconds + elapsedSeconds;
+            const clamped = Math.min(
+              Math.max(absoluteEnd, baseStartSeconds),
+              baseEndSeconds,
+            );
+            const progressSeconds = Math.max(0, clamped - baseStartSeconds);
+            onProgress(Math.min(1, progressSeconds / baseDurationSeconds));
+            return;
+          }
+          const ratio = Math.min(1, Math.max(0, elapsedSeconds / durationSeconds));
+          onProgress(ratio);
+        }
+      : null;
+
+  return readTranscriptionStream(response, {
+    signal,
+    onPartial,
+    onProgress: progressHandler,
+  });
 }
 
 async function transcribe() {
@@ -1821,8 +1938,16 @@ async function transcribe() {
     const updateLiveTranscript = streamingEnabled
       ? createLiveTranscriptUpdater(transcriptParts)
       : null;
+    const progressState = buildProgressState(chunks);
+    const updateProgressBar = createProgressUpdater(progressState, "Transcription en cours");
+    const updateChunkProgress = (chunkIndex, progress) => {
+      const clamped = Number.isFinite(progress) ? Math.min(1, Math.max(0, progress)) : 0;
+      if (progressState.progress[chunkIndex] >= clamped) return;
+      progressState.progress[chunkIndex] = clamped;
+      updateProgressBar();
+    };
     setProgressStatus(`Transcription : 0/${totalChunks} segment(s) termines.`);
-    setProgressBar({ label: "Transcription en cours", current: 0, total: totalChunks });
+    updateProgressBar(true);
 
     const parallelLimit = Math.max(1, Math.min(MAX_PARALLEL_REQUESTS, totalChunks));
     let completed = 0;
@@ -1854,6 +1979,11 @@ async function transcribe() {
                   updateLiveTranscript();
                 }
               : null,
+            onProgress: streamingEnabled
+              ? (progress) => {
+                  updateChunkProgress(chunkIndex, progress);
+                }
+              : null,
             chunk,
             chunkIndex,
             totalChunks,
@@ -1873,16 +2003,12 @@ async function transcribe() {
               if (updateLiveTranscript) {
                 updateLiveTranscript(true);
               }
+              updateChunkProgress(chunkIndex, 1);
               applyUsage(data.usage);
               completed += 1;
               setProgressStatus(
                 `Transcription : ${completed}/${totalChunks} segment(s) termines.`,
               );
-              setProgressBar({
-                label: "Transcription en cours",
-                current: completed,
-                total: totalChunks,
-              });
               active -= 1;
               if (completed >= totalChunks) {
                 finished = true;
@@ -2201,6 +2327,15 @@ if (elements.historyEnabled) {
   });
 }
 
+if (elements.summaryModel) {
+  elements.summaryModel.addEventListener("change", (event) => {
+    const value = event.target.value;
+    if (value) {
+      localStorage.setItem(SUMMARY_MODEL_STORAGE, value);
+    }
+  });
+}
+
 elements.rememberKey.addEventListener("change", (event) => {
   const remember = event.target.checked;
   if (remember) {
@@ -2240,7 +2375,18 @@ function loadStoredKey() {
   }
 }
 
+function loadSummaryModelChoice() {
+  if (!elements.summaryModel) return;
+  const stored = localStorage.getItem(SUMMARY_MODEL_STORAGE);
+  if (!stored) return;
+  const option = elements.summaryModel.querySelector(`option[value="${stored}"]`);
+  if (option) {
+    elements.summaryModel.value = stored;
+  }
+}
+
 loadStoredKey();
+loadSummaryModelChoice();
 loadThemeChoice();
 loadHistoryState();
 setHistoryPanelOpen(true);

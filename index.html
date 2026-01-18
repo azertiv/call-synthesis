@@ -161,6 +161,13 @@
                   <option value="en">Anglais</option>
                 </select>
               </label>
+              <label class="field">
+                <span>Modèle de synthèse</span>
+                <select id="summaryModel">
+                  <option value="mistral-medium-latest" selected>mistral-medium-latest</option>
+                  <option value="mistral-small-latest">mistral-small-latest</option>
+                </select>
+              </label>
               <label class="toggle">
                 <input type="checkbox" id="streamingToggle" />
                 <span>Streaming SSE (affichage en direct)</span>
@@ -219,41 +226,43 @@
 
       <div class="layout">
         <section class="panel upload">
-        <div class="panel-header">
-          <h2>
-            <span class="section-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M12 16V4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-                <path d="M7 9l5-5 5 5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-                <path d="M5 20h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-              </svg>
-            </span>
-            <span>Importer un fichier audio</span>
-          </h2>
-        </div>
-        <div class="dropzone" id="dropzone">
-          <input type="file" id="fileInput" accept="audio/*" />
-          <div class="drop-content">
-            <div class="drop-icon">⬆</div>
-            <div>
-              <strong>Glissez ou cliquez</strong>
-              <span>m4a, mp3, wav, mp4, webm</span>
+          <div class="panel-header">
+            <h2>
+              <span class="step-index" aria-hidden="true">01</span>
+              <span class="section-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 16V4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                  <path d="M7 9l5-5 5 5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                  <path d="M5 20h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                </svg>
+              </span>
+              <span>Importer un fichier audio</span>
+            </h2>
+          </div>
+          <div class="dropzone" id="dropzone">
+            <input type="file" id="fileInput" accept="audio/*" />
+            <div class="drop-content">
+              <div class="drop-icon">⬆</div>
+              <div>
+                <strong>Glissez ou cliquez</strong>
+                <span>m4a, mp3, wav, mp4, webm</span>
+              </div>
             </div>
           </div>
-        </div>
-        <div class="file-meta" id="fileMeta">
-          <span>Aucun fichier.</span>
-        </div>
-        <audio id="audioPreview" controls hidden></audio>
-        <div class="row">
-          <button class="primary" id="transcribeBtn" disabled>Transcrire</button>
-          <button class="ghost" id="cancelBtn" disabled>Annuler</button>
-        </div>
-      </section>
+          <div class="file-meta" id="fileMeta">
+            <span>Aucun fichier.</span>
+          </div>
+          <audio id="audioPreview" controls hidden></audio>
+          <div class="row">
+            <button class="primary" id="transcribeBtn" disabled>Transcrire</button>
+            <button class="ghost" id="cancelBtn" disabled>Annuler</button>
+          </div>
+        </section>
 
-      <section class="panel status">
+        <section class="panel status">
         <div class="panel-header">
           <h2>
+            <span class="step-index" aria-hidden="true">02</span>
             <span class="section-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path
@@ -375,11 +384,12 @@
             <div class="segments-empty">Aucun segment.</div>
           </div>
         </div>
-      </section>
+        </section>
 
-      <section class="panel output">
+        <section class="panel output span-full">
         <div class="panel-header">
           <h2>
+            <span class="step-index" aria-hidden="true">03</span>
             <span class="section-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M5 6h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
@@ -395,27 +405,28 @@
           <button class="ghost" id="copyBtn">Copier</button>
           <button class="ghost" id="downloadBtn">Télécharger</button>
         </div>
-        <div class="panel-divider" role="presentation"></div>
-        <div class="summary-block">
-          <div class="summary-header">
-            <div class="summary-title">
-              <span class="section-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M6 6h12" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-                  <path d="M6 12h9" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-                  <path d="M6 18h7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
-                </svg>
-              </span>
-              <span>Synthèse</span>
-            </div>
-            <div class="row summary-actions">
-              <button class="primary" id="summarizeBtn" disabled>Générer la synthèse</button>
-              <button class="ghost" id="downloadSummaryBtn" disabled>Télécharger PDF</button>
-            </div>
+        </section>
+
+        <section class="panel summary span-full">
+        <div class="panel-header">
+          <h2>
+            <span class="step-index" aria-hidden="true">04</span>
+            <span class="section-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6 6h12" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                <path d="M6 12h9" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                <path d="M6 18h7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+              </svg>
+            </span>
+            <span>Synthèse</span>
+          </h2>
+          <div class="row summary-actions">
+            <button class="primary" id="summarizeBtn" disabled>Générer la synthèse</button>
+            <button class="ghost" id="downloadSummaryBtn" disabled>Télécharger PDF</button>
           </div>
-          <div class="summary-output is-empty" id="summaryOutput" aria-live="polite">
-            La synthèse apparaîtra ici...
-          </div>
+        </div>
+        <div class="summary-output is-empty" id="summaryOutput" aria-live="polite">
+          La synthèse apparaîtra ici...
         </div>
         </section>
       </div>
