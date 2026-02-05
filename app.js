@@ -7,7 +7,6 @@ const PROVIDER_CONFIG = {
   label: "Mistral",
   endpoint: "https://api.mistral.ai/v1/audio/transcriptions",
 };
-const STREAMING_TIMESTAMP_GRANULARITIES = ["segment"];
 const MAX_PARALLEL_REQUESTS = 3;
 const SEGMENT_TARGET_MINUTES = 12;
 const SEGMENT_TARGET_SECONDS = SEGMENT_TARGET_MINUTES * 60;
@@ -47,6 +46,7 @@ const elements = {
   rememberKey: document.getElementById("rememberKey"),
   clearKey: document.getElementById("clearKey"),
   language: document.getElementById("language"),
+  diarizationToggle: document.getElementById("diarizationToggle"),
   streamingToggle: document.getElementById("streamingToggle"),
   openAiKey: document.getElementById("openAiKey"),
   rememberOpenAiKey: document.getElementById("rememberOpenAiKey"),
@@ -156,10 +156,40 @@ function formatDuration(seconds) {
   return `${hours} h ${minutes} min`;
 }
 
-function buildTranscriptFromSegments(segments) {
+function formatSpeakerLabel(segment) {
+  if (!segment || typeof segment !== "object") return "";
+  const raw =
+    segment.speaker ??
+    segment.speaker_id ??
+    segment.speakerId ??
+    segment.speaker_label ??
+    segment.speakerLabel ??
+    segment.speaker_name ??
+    segment.speakerName;
+  if (raw == null) return "";
+  const value = String(raw).trim();
+  if (!value) return "";
+  const speakerMatch = value.match(/speaker[\s_-]*(\d+)/i);
+  if (speakerMatch) return `Locuteur ${speakerMatch[1]}`;
+  const locuteurMatch = value.match(/locuteur[\s_-]*(\d+)/i);
+  if (locuteurMatch) return `Locuteur ${locuteurMatch[1]}`;
+  if (/speaker|locuteur/i.test(value)) return value;
+  if (value === "0") return "Locuteur 0";
+  if (value === "1") return "Locuteur 1";
+  return `Locuteur ${value}`;
+}
+
+function buildTranscriptFromSegments(segments, { diarize = false } = {}) {
   if (!Array.isArray(segments) || !segments.length) return "";
   return segments
-    .map((segment) => (segment?.text || "").trim())
+    .map((segment) => {
+      const text = (segment?.text || "").trim();
+      if (!text) return "";
+      if (!diarize) return text;
+      const speaker = formatSpeakerLabel(segment);
+      if (!speaker) return text;
+      return `${speaker}: ${text}`;
+    })
     .filter(Boolean)
     .join("\n");
 }
@@ -2255,6 +2285,7 @@ function cancelTranscription() {
 async function transcribeChunk({
   apiKey,
   language,
+  diarize,
   stream,
   onPartial,
   onProgress,
@@ -2275,11 +2306,11 @@ async function transcribeChunk({
   if (language) {
     formData.append("language", language);
   }
+  if (diarize) {
+    formData.append("diarize", "true");
+  }
   if (stream) {
     formData.append("stream", "true");
-    STREAMING_TIMESTAMP_GRANULARITIES.forEach((granularity) => {
-      formData.append("timestamp_granularities", granularity);
-    });
   }
 
   let response;
@@ -2363,6 +2394,7 @@ async function transcribeChunk({
 async function transcribe() {
   const apiKey = elements.apiKey.value.trim();
   const language = elements.language.value.trim();
+  const diarize = Boolean(elements.diarizationToggle?.checked);
   const streamingEnabled = Boolean(elements.streamingToggle?.checked);
   const file = state.file;
 
@@ -2444,6 +2476,7 @@ async function transcribe() {
           transcribeChunk({
             apiKey,
             language,
+            diarize,
             stream: streamingEnabled,
             onPartial: updateLiveTranscript
               ? (text) => {
@@ -2468,7 +2501,7 @@ async function transcribe() {
               if (finished) return;
               const rawText =
                 typeof data.text === "string" ? data.text : transcriptParts[chunkIndex] || "";
-              const segmentsText = buildTranscriptFromSegments(data.segments);
+              const segmentsText = buildTranscriptFromSegments(data.segments, { diarize });
               const chunkText = (
                 segmentsText.length > rawText.length ? segmentsText : rawText
               ).trim();
