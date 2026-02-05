@@ -356,15 +356,30 @@
                   <audio id="audioPreview" controls hidden></audio>
                 </div>
                 <textarea id="transcript" placeholder="La transcription apparaîtra ici..." readonly></textarea>
-                <div class="speaker-panel" id="speakerPanel" hidden>
-                  <div class="speaker-header">
-                    <div class="speaker-title">Locuteurs</div>
-                    <div class="speaker-subtitle">
-                      Renommez les locuteurs et affichez des extraits pour les identifier.
-                    </div>
+              </div>
+            </section>
+
+            <section class="panel speaker-panel stage-view" id="speakerPanel" hidden>
+              <div class="panel-header">
+                <div class="panel-heading">
+                  <div class="panel-title-row">
+                    <span class="section-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M7 12a3 3 0 1 1 6 0a3 3 0 0 1-6 0Z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                        <path d="M2.5 19.5c1.5-3.3 4.1-5 7.5-5s6 1.7 7.5 5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                        <path d="M15.5 12a2.5 2.5 0 1 1 5 0a2.5 2.5 0 0 1-5 0Z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                        <path d="M17 16.2c2.3.3 4 1.5 4.5 3.3" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6" />
+                      </svg>
+                    </span>
+                    <h2>Locuteurs</h2>
                   </div>
-                  <div class="speaker-list" id="speakerList"></div>
+                  <p class="panel-subtitle">
+                    Renommez les locuteurs et affichez des extraits pour les identifier.
+                  </p>
                 </div>
+              </div>
+              <div class="panel-body">
+                <div class="speaker-list" id="speakerList"></div>
               </div>
             </section>
 

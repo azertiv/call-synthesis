@@ -798,25 +798,9 @@ textarea {
   resize: vertical;
 }
 
-.speaker-panel {
-  margin-top: 14px;
+.speaker-panel .panel-body {
   display: grid;
-  gap: 10px;
-}
-
-.speaker-header {
-  display: grid;
-  gap: 4px;
-}
-
-.speaker-title {
-  font-weight: 600;
-  font-size: 1rem;
-}
-
-.speaker-subtitle {
-  font-size: 0.85rem;
-  color: var(--muted);
+  gap: 12px;
 }
 
 .speaker-list {
