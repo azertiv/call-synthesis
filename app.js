@@ -1812,6 +1812,7 @@ async function transcribeFile({
   }
   if (diarize) {
     formData.append("diarize", "true");
+    formData.append("timestamp_granularities", "segment");
   }
   if (stream) {
     formData.append("stream", "true");
@@ -1841,8 +1842,10 @@ async function transcribeFile({
   if (!response.ok) {
     const errorText = await response.text();
     const parsedMessage = extractApiErrorMessage(errorText);
-    const message = parsedMessage || errorText || `Erreur API ${PROVIDER_CONFIG.label}.`;
-    throw new Error(message.trim());
+    const fallback = `Erreur API ${PROVIDER_CONFIG.label} (HTTP ${response.status}).`;
+    const message = parsedMessage || errorText || fallback;
+    const safeMessage = typeof message === "string" ? message : JSON.stringify(message);
+    throw new Error(safeMessage.trim());
   }
 
   if (!stream) {
@@ -1900,6 +1903,7 @@ async function transcribe() {
       }
       setStatus("Diarisation incompatible avec le streaming SSE. Streaming désactivé.");
     }
+    const effectiveLanguage = diarize ? "" : language;
 
     const controller = new AbortController();
     state.abortController = controller;
@@ -1946,7 +1950,7 @@ async function transcribe() {
 
     const data = await transcribeFile({
       apiKey,
-      language,
+      language: effectiveLanguage,
       diarize,
       stream: streamingEnabled,
       onPartial: updateLiveTranscript,
@@ -2048,9 +2052,11 @@ if (elements.cancelBtn) {
 }
 
 if (elements.diarizationToggle && elements.streamingToggle) {
-  const syncStreamingAvailability = (showNotice = false) => {
+  let cachedLanguage = elements.language?.value || "";
+  const syncDiarizationConstraints = (showNotice = false) => {
     const diarize = Boolean(elements.diarizationToggle.checked);
     const streamingChecked = Boolean(elements.streamingToggle.checked);
+
     if (diarize && streamingChecked) {
       elements.streamingToggle.checked = false;
       if (showNotice) {
@@ -2063,13 +2069,35 @@ if (elements.diarizationToggle && elements.streamingToggle) {
     } else {
       elements.streamingToggle.removeAttribute("aria-disabled");
     }
+
+    if (elements.language) {
+      if (diarize) {
+        if (elements.language.value) {
+          cachedLanguage = elements.language.value;
+        }
+        elements.language.value = "";
+        elements.language.disabled = true;
+        elements.language.setAttribute("aria-disabled", "true");
+        if (showNotice) {
+          setStatus(
+            "Diarisation: la langue est repassée en automatique (incompatible avec les timestamps).",
+          );
+        }
+      } else {
+        elements.language.disabled = false;
+        elements.language.removeAttribute("aria-disabled");
+        if (cachedLanguage) {
+          elements.language.value = cachedLanguage;
+        }
+      }
+    }
   };
-  syncStreamingAvailability(false);
+  syncDiarizationConstraints(false);
   elements.diarizationToggle.addEventListener("change", () => {
-    syncStreamingAvailability(true);
+    syncDiarizationConstraints(true);
   });
   elements.streamingToggle.addEventListener("change", () => {
-    syncStreamingAvailability(true);
+    syncDiarizationConstraints(true);
   });
 }
 
