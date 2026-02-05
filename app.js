@@ -164,6 +164,7 @@ function getDefaultSpeakerLabel(key) {
   if (/speaker|locuteur/i.test(value)) return value;
   if (value === "0") return "Locuteur 0";
   if (value === "1") return "Locuteur 1";
+  if (/[a-z\u00c0-\u017f]/i.test(value)) return value;
   return `Locuteur ${value}`;
 }
 
@@ -226,6 +227,70 @@ function buildSpeakerMeta(segments) {
     label: getDefaultSpeakerLabel(key) || "Locuteur",
     examples: examplesByKey.get(key) || [],
   }));
+}
+
+function isLikelySpeakerLabel(label) {
+  if (!label) return false;
+  const trimmed = label.trim();
+  if (!trimmed) return false;
+  if (trimmed.length > 40) return false;
+  if (/^https?$/i.test(trimmed)) return false;
+  if (/^\d{1,2}:\d{2}$/.test(trimmed)) return false;
+  if (/^(key points|summary|decisions?|actions?|todo|notes?)$/i.test(trimmed)) return false;
+  const wordCount = trimmed.split(/\s+/).length;
+  if (wordCount > 4) return false;
+  return /[a-z\u00c0-\u017f0-9]/i.test(trimmed);
+}
+
+function parseSpeakerTranscript(text) {
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!lines.length) return [];
+
+  const labelPattern = /^([^:]{1,60}):\s*(.+)$/;
+  const counts = new Map();
+  for (const line of lines) {
+    const match = line.match(labelPattern);
+    if (!match) continue;
+    const label = match[1].trim();
+    if (!isLikelySpeakerLabel(label)) continue;
+    counts.set(label, (counts.get(label) || 0) + 1);
+  }
+  if (!counts.size) return [];
+
+  const explicitLabels = new Set();
+  for (const [label, count] of counts.entries()) {
+    if (/^(locuteur|speaker)\b/i.test(label) || count >= 2) {
+      explicitLabels.add(label);
+    }
+  }
+  if (!explicitLabels.size && counts.size >= 2) {
+    for (const label of counts.keys()) {
+      explicitLabels.add(label);
+    }
+  }
+  if (!explicitLabels.size) return [];
+
+  const segments = [];
+  let current = null;
+  for (const line of lines) {
+    const match = line.match(labelPattern);
+    if (match) {
+      const label = match[1].trim();
+      const content = match[2].trim();
+      if (explicitLabels.has(label)) {
+        current = { speaker_id: label, text: content };
+        segments.push(current);
+        continue;
+      }
+    }
+    if (current) {
+      current.text = `${current.text} ${line}`.trim();
+    }
+  }
+  return segments;
 }
 
 function clearSpeakerState() {
@@ -1626,6 +1691,10 @@ function openHistoryEntry(id) {
   elements.transcript.value = entry.text;
   clearSummary();
   clearSpeakerState();
+  const parsedSegments = parseSpeakerTranscript(entry.text);
+  if (parsedSegments.length) {
+    setSpeakerStateFromSegments(parsedSegments);
+  }
   const estimatedTokens = entry.tokens?.estimate || estimateTokens(entry.text);
   if (entry.usageSeen) {
     state.usage = {
