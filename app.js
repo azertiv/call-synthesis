@@ -87,6 +87,8 @@ const elements = {
   segmentsCount: document.getElementById("segmentsCount"),
   downloadSegmentsBtn: document.getElementById("downloadSegmentsBtn"),
   themeButtons: document.querySelectorAll("[data-theme-choice]"),
+  themeCycle: document.getElementById("themeCycle"),
+  topbar: document.querySelector(".topbar"),
   historyToggle: document.getElementById("historyToggle"),
   historyPanel: document.getElementById("historyPanel"),
   historyCloseBtn: document.getElementById("historyCloseBtn"),
@@ -128,6 +130,9 @@ const ffmpegState = {
 
 let progressLine = null;
 let tokenLine = null;
+const THEME_CHOICES = ["system", "light", "dark"];
+const themeIconMap = {};
+let topbarObserver = null;
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return "—";
@@ -1326,6 +1331,7 @@ function updateHistoryToggleLabel(isOpen) {
 function setHistoryPanelOpen(isOpen) {
   if (!elements.historyPanel) return;
   document.body.classList.toggle("history-collapsed", !isOpen);
+  document.body.classList.toggle("history-open", isOpen);
   elements.historyPanel.setAttribute("aria-hidden", isOpen ? "false" : "true");
   if (elements.historyToggle) {
     elements.historyToggle.setAttribute("aria-expanded", isOpen ? "true" : "false");
@@ -2718,6 +2724,54 @@ document.addEventListener("dragend", () => {
   setGlobalDragActive(false);
 });
 
+function cacheThemeIcons() {
+  if (!elements.themeButtons?.length) return;
+  elements.themeButtons.forEach((button) => {
+    const choice = button.dataset.themeChoice;
+    const svg = button.querySelector("svg");
+    if (choice && svg && !themeIconMap[choice]) {
+      themeIconMap[choice] = svg.outerHTML;
+    }
+  });
+}
+
+function getThemeLabel(choice) {
+  if (choice === "light") return "Clair";
+  if (choice === "dark") return "Sombre";
+  return "Système";
+}
+
+function updateThemeCycleButton(choice) {
+  if (!elements.themeCycle) return;
+  cacheThemeIcons();
+  const label = getThemeLabel(choice);
+  const iconSlot = elements.themeCycle.querySelector(".theme-compact-icon");
+  if (iconSlot) {
+    iconSlot.innerHTML = themeIconMap[choice] || "";
+  }
+  const srOnly = elements.themeCycle.querySelector(".sr-only");
+  if (srOnly) {
+    srOnly.textContent = `Thème : ${label}`;
+  }
+  elements.themeCycle.setAttribute("aria-label", `Thème : ${label}`);
+  elements.themeCycle.title = `Thème : ${label}`;
+  elements.themeCycle.dataset.themeChoice = choice;
+}
+
+function getCurrentThemeChoice() {
+  const attr = document.documentElement.getAttribute("data-theme");
+  if (attr === "light" || attr === "dark") {
+    return attr;
+  }
+  return "system";
+}
+
+function getNextThemeChoice(choice) {
+  const index = THEME_CHOICES.indexOf(choice);
+  const nextIndex = index === -1 ? 0 : (index + 1) % THEME_CHOICES.length;
+  return THEME_CHOICES[nextIndex];
+}
+
 function normalizeThemeChoice(choice) {
   if (choice === "light" || choice === "dark" || choice === "system") {
     return choice;
@@ -2738,6 +2792,7 @@ function applyThemeChoice(choice) {
       button.setAttribute("aria-pressed", isActive ? "true" : "false");
     });
   }
+  updateThemeCycleButton(normalized);
 }
 
 function setThemeChoice(choice) {
@@ -2749,6 +2804,32 @@ function setThemeChoice(choice) {
 function loadThemeChoice() {
   const stored = localStorage.getItem(THEME_STORAGE);
   applyThemeChoice(stored || "system");
+}
+
+function syncTopbarOffset() {
+  if (!elements.topbar) return;
+  const height = elements.topbar.getBoundingClientRect().height;
+  if (height > 0) {
+    document.documentElement.style.setProperty("--topbar-offset", `${height}px`);
+  }
+}
+
+function initTopbarObserver() {
+  if (!elements.topbar) return;
+  syncTopbarOffset();
+  if (window.ResizeObserver && !topbarObserver) {
+    topbarObserver = new ResizeObserver(() => {
+      syncTopbarOffset();
+    });
+    topbarObserver.observe(elements.topbar);
+  }
+  window.addEventListener("resize", syncTopbarOffset);
+  window.addEventListener("orientationchange", syncTopbarOffset);
+  if (document.fonts?.ready) {
+    document.fonts.ready.then(() => {
+      syncTopbarOffset();
+    });
+  }
 }
 
 function loadHistoryState() {
@@ -2766,6 +2847,14 @@ if (elements.themeButtons?.length) {
     button.addEventListener("click", () => {
       setThemeChoice(button.dataset.themeChoice);
     });
+  });
+}
+
+if (elements.themeCycle) {
+  elements.themeCycle.addEventListener("click", () => {
+    const current = getCurrentThemeChoice();
+    const next = getNextThemeChoice(current);
+    setThemeChoice(next);
   });
 }
 
@@ -2957,8 +3046,10 @@ loadStoredOpenAiKey();
 loadSummaryModelChoice();
 loadSummaryReasoningChoice();
 loadThemeChoice();
+initTopbarObserver();
 loadHistoryState();
-setHistoryPanelOpen(true);
+const shouldOpenHistory = !window.matchMedia("(max-width: 720px)").matches;
+setHistoryPanelOpen(shouldOpenHistory);
 setSegmentsVisibility(false);
 clearSummary();
 updateSummaryControls();
