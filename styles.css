@@ -15,7 +15,6 @@
   --drop-hover: rgba(255, 107, 74, 0.12);
   --ghost: rgba(18, 20, 27, 0.08);
   --status-bg: rgba(255, 255, 255, 0.7);
-  --segment-bg: rgba(255, 255, 255, 0.75);
   --badge-bg: rgba(255, 255, 255, 0.7);
   --orbit-warm: rgba(255, 107, 74, 0.25);
   --orbit-cool: rgba(31, 157, 143, 0.25);
@@ -50,7 +49,6 @@
   --drop-hover: rgba(255, 140, 106, 0.18);
   --ghost: rgba(255, 255, 255, 0.08);
   --status-bg: rgba(12, 14, 20, 0.7);
-  --segment-bg: rgba(12, 14, 20, 0.7);
   --badge-bg: rgba(12, 14, 20, 0.8);
   --orbit-warm: rgba(255, 140, 106, 0.18);
   --orbit-cool: rgba(75, 211, 192, 0.18);
@@ -76,7 +74,6 @@
     --drop-hover: rgba(255, 140, 106, 0.18);
     --ghost: rgba(255, 255, 255, 0.08);
     --status-bg: rgba(12, 14, 20, 0.7);
-    --segment-bg: rgba(12, 14, 20, 0.7);
     --badge-bg: rgba(12, 14, 20, 0.8);
     --orbit-warm: rgba(255, 140, 106, 0.18);
     --orbit-cool: rgba(75, 211, 192, 0.18);
@@ -1180,114 +1177,6 @@ button:disabled {
   color: var(--muted);
 }
 
-.segments {
-  display: grid;
-  gap: 10px;
-}
-
-.segments-inline {
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px dashed var(--border);
-}
-
-body:not(.has-file) .segments-inline {
-  display: none;
-}
-
-.segments-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: 0.95rem;
-}
-
-.segments-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-weight: 600;
-}
-
-.segments-count {
-  font-size: 0.72rem;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  padding: 4px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  color: var(--muted);
-}
-
-.segments-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.segments.is-collapsed .segments-list {
-  display: none;
-}
-
-.segments-toggle .icon-hide {
-  display: none;
-}
-
-.segments:not(.is-collapsed) .segments-toggle .icon-show {
-  display: none;
-}
-
-.segments:not(.is-collapsed) .segments-toggle .icon-hide {
-  display: block;
-}
-
-.segments-list {
-  display: grid;
-  gap: 8px;
-}
-
-.segments-inline .segments-list {
-  max-height: 220px;
-  overflow-y: auto;
-  padding-right: 2px;
-  -webkit-overflow-scrolling: touch;
-}
-
-.segments-empty {
-  padding: 12px;
-  border-radius: 12px;
-  border: 1px dashed var(--border);
-  color: var(--muted);
-  font-size: 0.9rem;
-}
-
-.segment-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid var(--border);
-  background: var(--segment-bg);
-  font-size: 0.9rem;
-}
-
-.segment-name {
-  font-weight: 600;
-  color: var(--ink);
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.segment-size {
-  color: var(--muted);
-  font-size: 0.85rem;
-}
-
 .history-list {
   display: grid;
   gap: 12px;
@@ -1656,15 +1545,6 @@ body:not(.has-file) .segments-inline {
   }
 
   .action-row button {
-    width: 100%;
-  }
-
-  .segments-header {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .segments-actions {
     width: 100%;
   }
 

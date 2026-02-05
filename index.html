@@ -313,72 +313,6 @@
                   <span>Formats acceptés : m4a, mp3, wav, mp4, webm.</span>
                   <span>La transcription se lance dans l'éditeur.</span>
                 </div>
-                <div class="segments segments-inline is-collapsed" id="segmentsPanel">
-                  <div class="segments-header">
-                    <div class="segments-title">
-                      <span class="section-icon" aria-hidden="true">
-                        <svg viewBox="0 0 24 24" aria-hidden="true">
-                          <rect x="4" y="6" width="16" height="3" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6" />
-                          <rect x="4" y="11" width="16" height="3" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6" />
-                          <rect x="4" y="16" width="12" height="3" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6" />
-                        </svg>
-                      </span>
-                      <span>Segments</span>
-                      <span class="segments-count" id="segmentsCount">—</span>
-                    </div>
-                    <div class="segments-actions">
-                      <button
-                        class="ghost icon segments-toggle"
-                        id="toggleSegmentsBtn"
-                        type="button"
-                        aria-controls="segmentsList"
-                        aria-expanded="false"
-                        title="Afficher les segments"
-                      >
-                        <svg class="icon-show" viewBox="0 0 24 24" aria-hidden="true">
-                          <path
-                            d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            stroke-width="1.6"
-                          />
-                          <circle cx="12" cy="12" r="2.8" fill="none" stroke="currentColor" stroke-width="1.6" />
-                        </svg>
-                        <svg class="icon-hide" viewBox="0 0 24 24" aria-hidden="true">
-                          <path
-                            d="M3 5l18 14"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-linecap="round"
-                            stroke-width="1.6"
-                          />
-                          <path
-                            d="M4.5 7.5C2.9 9 2 10.5 2 12s3.5 6 10 6c2.2 0 4.1-.5 5.7-1.3"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-linecap="round"
-                            stroke-width="1.6"
-                          />
-                          <path
-                            d="M9 9.2a3.5 3.5 0 0 1 5.1 4.8"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            stroke-width="1.6"
-                          />
-                        </svg>
-                        <span class="sr-only">Afficher les segments</span>
-                      </button>
-                      <button class="ghost" id="downloadSegmentsBtn" disabled>Télécharger</button>
-                    </div>
-                  </div>
-                  <div class="segments-list" id="segmentsList">
-                    <div class="segments-empty">Aucun segment.</div>
-                  </div>
-                </div>
               </div>
             </section>
 
@@ -556,7 +490,7 @@
                 >
                   <div class="progress-fill" id="progressFill"></div>
                 </div>
-                <div class="progress-meta" id="progressMeta">0/0 segments</div>
+                <div class="progress-meta" id="progressMeta">—</div>
               </div>
               <div class="status-log" id="statusLog">
                 <div class="status-line idle">En attente.</div>
@@ -579,7 +513,6 @@
     </div>
 
 
-    <script src="vendor/ffmpeg/ffmpeg.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
     <script src="app.js"></script>
   </body>

@@ -7,13 +7,6 @@ const PROVIDER_CONFIG = {
   label: "Mistral",
   endpoint: "https://api.mistral.ai/v1/audio/transcriptions",
 };
-const MAX_PARALLEL_REQUESTS = 3;
-const SEGMENT_TARGET_MINUTES = 12;
-const SEGMENT_TARGET_SECONDS = SEGMENT_TARGET_MINUTES * 60;
-const SEGMENT_OVERLAP_SECONDS = 10;
-const FFMPEG_BASE_PATH = "vendor/ffmpeg/";
-const FFMPEG_CORE_FILE = "ffmpeg-core.js";
-const FFMPEG_WASM_FILE = "ffmpeg-core.wasm";
 const STORAGE_KEY = "callSynthesis.apiKey";
 const STORAGE_REMEMBER = "callSynthesis.remember";
 const OPENAI_STORAGE_KEY = "callSynthesis.openAiApiKey";
@@ -22,8 +15,6 @@ const THEME_STORAGE = "callSynthesis.theme";
 const HISTORY_STORAGE_KEY = "callSynthesis.history";
 const HISTORY_ENABLED_KEY = "callSynthesis.historyEnabled";
 const HISTORY_LIMIT = 30;
-const OVERLAP_MIN_WORDS = 6;
-const OVERLAP_MAX_WORDS = 80;
 const PDF_FONT_FAMILY = "times";
 // Ajuster selon vos tarifs API.
 const TOKEN_PRICE_EUR_PER_1K = 0.002;
@@ -81,11 +72,6 @@ const elements = {
   tokensEstimate: document.getElementById("tokensEstimate"),
   tokensPrice: document.getElementById("tokensPrice"),
   usageHint: document.getElementById("usageHint"),
-  segmentsPanel: document.getElementById("segmentsPanel"),
-  segmentsList: document.getElementById("segmentsList"),
-  segmentsToggleBtn: document.getElementById("toggleSegmentsBtn"),
-  segmentsCount: document.getElementById("segmentsCount"),
-  downloadSegmentsBtn: document.getElementById("downloadSegmentsBtn"),
   themeButtons: document.querySelectorAll("[data-theme-choice]"),
   themeCycle: document.getElementById("themeCycle"),
   topbar: document.querySelector(".topbar"),
@@ -110,10 +96,6 @@ const state = {
   processing: false,
   abortController: null,
   cancelRequested: false,
-  segments: [],
-  segmentUrls: [],
-  prepared: null,
-  segmentsVisible: false,
   history: [],
   historyEnabled: true,
   historyQuery: "",
@@ -121,11 +103,6 @@ const state = {
   summaryText: "",
   summaryTitle: "",
   summaryProcessing: false,
-};
-
-const ffmpegState = {
-  instance: null,
-  loading: null,
 };
 
 let progressLine = null;
@@ -227,117 +204,6 @@ function throwIfAborted(signal) {
   }
 }
 
-function normalizeForMatch(value) {
-  return value
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
-}
-
-function extractNormalizedWords(text) {
-  const words = [];
-  const regex = /[\p{L}\p{N}]+/gu;
-  let match;
-  while ((match = regex.exec(text)) !== null) {
-    const normalized = normalizeForMatch(match[0]);
-    if (normalized) {
-      words.push(normalized);
-    }
-  }
-  return words;
-}
-
-function findOverlapWordCount(prevText, nextText) {
-  const prevWords = extractNormalizedWords(prevText);
-  const nextWords = extractNormalizedWords(nextText);
-  if (!prevWords.length || !nextWords.length) return 0;
-  const maxOverlap = Math.min(prevWords.length, nextWords.length, OVERLAP_MAX_WORDS);
-  for (let size = maxOverlap; size >= OVERLAP_MIN_WORDS; size -= 1) {
-    let matches = true;
-    for (let i = 0; i < size; i += 1) {
-      if (prevWords[prevWords.length - size + i] !== nextWords[i]) {
-        matches = false;
-        break;
-      }
-    }
-    if (matches) {
-      return size;
-    }
-  }
-  return 0;
-}
-
-function trimLeadingWords(text, wordCount) {
-  if (!wordCount) return text;
-  const regex = /[\p{L}\p{N}]+/gu;
-  let match;
-  let count = 0;
-  let cutIndex = 0;
-  while ((match = regex.exec(text)) !== null) {
-    count += 1;
-    if (count === wordCount) {
-      cutIndex = regex.lastIndex;
-      break;
-    }
-  }
-  if (count < wordCount) return "";
-  const remainder = text.slice(cutIndex);
-  return remainder.replace(/^[\s,;:.!?-]+/, "");
-}
-
-function removeOverlapFromStart(prevText, nextText) {
-  const overlapWords = findOverlapWordCount(prevText, nextText);
-  if (!overlapWords) return nextText.trim();
-  return trimLeadingWords(nextText, overlapWords).trim();
-}
-
-function mergeTranscriptParts(parts) {
-  let merged = "";
-  let previousRaw = "";
-  for (const part of parts) {
-    const raw = (part || "").trim();
-    if (!raw) {
-      previousRaw = raw;
-      continue;
-    }
-    if (!merged) {
-      merged = raw;
-      previousRaw = raw;
-      continue;
-    }
-    const trimmed = removeOverlapFromStart(previousRaw, raw);
-    if (trimmed) {
-      merged = `${merged}\n\n${trimmed}`;
-    }
-    previousRaw = raw;
-  }
-  return merged;
-}
-
-function buildLiveTranscript(parts) {
-  return parts
-    .map((part) => (part || "").trim())
-    .filter(Boolean)
-    .join("\n\n");
-}
-
-function createLiveTranscriptUpdater(parts) {
-  let scheduled = false;
-  const render = () => {
-    scheduled = false;
-    elements.transcript.value = buildLiveTranscript(parts);
-  };
-  return (force = false) => {
-    if (force) {
-      render();
-      return;
-    }
-    if (scheduled) return;
-    scheduled = true;
-    requestAnimationFrame(render);
-  };
-}
-
 function setStatus(message, isIdle = false) {
   const line = document.createElement("div");
   line.className = `status-line${isIdle ? " idle" : ""}`;
@@ -381,7 +247,7 @@ function setProgressBar({ label, current, total, meta }) {
       elements.progressMeta.textContent = meta;
     } else {
       elements.progressMeta.textContent = safeTotal
-        ? `${clampedCurrent}/${safeTotal} segment${safeTotal > 1 ? "s" : ""}`
+        ? `${formatDuration(clampedCurrent)} / ${formatDuration(safeTotal)}`
         : "Preparation...";
     }
   }
@@ -398,57 +264,11 @@ function resetProgressBar() {
     elements.progressValue.textContent = "0%";
   }
   if (elements.progressMeta) {
-    elements.progressMeta.textContent = "0/0 segments";
+    elements.progressMeta.textContent = "—";
   }
   if (elements.progressLabel) {
     elements.progressLabel.textContent = "Transcription en cours";
   }
-}
-
-function buildProgressState(chunks) {
-  const durations = chunks.map((chunk) =>
-    Number(chunk?.baseDurationSeconds ?? chunk?.durationSeconds ?? 0),
-  );
-  const hasDuration = durations.every(
-    (duration) => Number.isFinite(duration) && duration > 0,
-  );
-  const weights = hasDuration ? durations : new Array(chunks.length).fill(1);
-  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0) || chunks.length || 1;
-  return {
-    weights,
-    totalWeight,
-    hasDuration,
-    progress: new Array(chunks.length).fill(0),
-  };
-}
-
-function createProgressUpdater(progressState, label) {
-  let scheduled = false;
-  const render = () => {
-    scheduled = false;
-    const progressWeight = progressState.progress.reduce(
-      (sum, progress, index) => sum + progress * progressState.weights[index],
-      0,
-    );
-    const meta = progressState.hasDuration
-      ? `${formatDuration(progressWeight)} / ${formatDuration(progressState.totalWeight)}`
-      : null;
-    setProgressBar({
-      label,
-      current: progressWeight,
-      total: progressState.totalWeight,
-      meta,
-    });
-  };
-  return (force = false) => {
-    if (force) {
-      render();
-      return;
-    }
-    if (scheduled) return;
-    scheduled = true;
-    requestAnimationFrame(render);
-  };
 }
 
 function setProcessing(isProcessing) {
@@ -1208,48 +1028,6 @@ function applyUsage(usage) {
   updateUsageHint();
 }
 
-function updateSegmentsCount() {
-  if (!elements.segmentsCount) return;
-  const count = state.segments.length;
-  elements.segmentsCount.textContent = count ? String(count) : "—";
-}
-
-function setSegmentsVisibility(visible) {
-  state.segmentsVisible = Boolean(visible);
-  if (elements.segmentsPanel) {
-    elements.segmentsPanel.classList.toggle("is-collapsed", !state.segmentsVisible);
-  }
-  if (elements.segmentsToggleBtn) {
-    const label = state.segmentsVisible ? "Masquer les segments" : "Afficher les segments";
-    elements.segmentsToggleBtn.setAttribute(
-      "aria-expanded",
-      state.segmentsVisible ? "true" : "false",
-    );
-    elements.segmentsToggleBtn.setAttribute("aria-label", label);
-    elements.segmentsToggleBtn.title = label;
-    const labelNode = elements.segmentsToggleBtn.querySelector(".sr-only");
-    if (labelNode) {
-      labelNode.textContent = label;
-    }
-  }
-}
-
-function clearSegments() {
-  state.segments = [];
-  if (state.segmentUrls.length) {
-    for (const url of state.segmentUrls) {
-      URL.revokeObjectURL(url);
-    }
-  }
-  state.segmentUrls = [];
-  if (!elements.segmentsList) return;
-  elements.segmentsList.innerHTML = '<div class="segments-empty">Aucun segment.</div>';
-  if (elements.downloadSegmentsBtn) {
-    elements.downloadSegmentsBtn.disabled = true;
-  }
-  updateSegmentsCount();
-}
-
 function setPanelCollapsed(panel, collapsed) {
   if (!panel) return;
   const isCollapsed = Boolean(collapsed);
@@ -1723,65 +1501,6 @@ function exportHistoryEntries() {
   setStatus("Historique exporté.");
 }
 
-function buildSegmentFilename(baseName, file, chunk) {
-  const extension = chunk.extension || getFileExtension(file);
-  if (chunk.isOriginal && file?.name) {
-    return file.name;
-  }
-  return `${baseName}-part-${String(chunk.index).padStart(2, "0")}.${extension}`;
-}
-
-function setSegments(chunks, file) {
-  clearSegments();
-  if (!elements.segmentsList) return;
-  if (!chunks || !chunks.length) return;
-
-  const baseName = sanitizeBaseName(file?.name || "audio");
-  const fragment = document.createDocumentFragment();
-  state.segments = chunks.map((chunk) => {
-    const filename = buildSegmentFilename(baseName, file, chunk);
-    const url = URL.createObjectURL(chunk.blob);
-    state.segmentUrls.push(url);
-
-    const item = document.createElement("div");
-    item.className = "segment-item";
-
-    const name = document.createElement("span");
-    name.className = "segment-name";
-    name.textContent = filename;
-
-    const size = document.createElement("span");
-    size.className = "segment-size";
-    size.textContent = formatBytes(chunk.blob.size);
-
-    const button = document.createElement("button");
-    button.className = "ghost";
-    button.textContent = "Télécharger";
-    button.addEventListener("click", () => {
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    });
-
-    item.appendChild(name);
-    item.appendChild(size);
-    item.appendChild(button);
-    fragment.appendChild(item);
-
-    return { filename, url };
-  });
-
-  elements.segmentsList.innerHTML = "";
-  elements.segmentsList.appendChild(fragment);
-  if (elements.downloadSegmentsBtn) {
-    elements.downloadSegmentsBtn.disabled = false;
-  }
-  updateSegmentsCount();
-}
-
 function setFile(file) {
   state.file = file;
   document.body.classList.toggle("has-file", Boolean(file));
@@ -1789,14 +1508,11 @@ function setFile(file) {
   state.durationSeconds = null;
   state.usage = { input: 0, output: 0, total: 0 };
   state.usageSeen = false;
-  state.prepared = null;
   setProcessing(state.processing);
   elements.transcript.value = "";
   clearSummary();
   setTokens({ input: "—", output: "—", total: "—", estimate: "—" });
   updateUsageHint();
-  clearSegments();
-  setSegmentsVisibility(false);
 
   if (!file) {
     elements.fileMeta.textContent = "Aucun fichier.";
@@ -1969,16 +1685,6 @@ function extensionFromMimeType(mimeType) {
   return "webm";
 }
 
-function mimeFromExtension(extension) {
-  const ext = extension.toLowerCase();
-  if (ext === "m4a" || ext === "mp4") return "audio/mp4";
-  if (ext === "aac") return "audio/aac";
-  if (ext === "mp3") return "audio/mpeg";
-  if (ext === "wav") return "audio/wav";
-  if (ext === "webm") return "audio/webm";
-  return "audio/webm";
-}
-
 function getFileExtension(file) {
   const name = file?.name || "";
   const match = name.match(/\.([a-z0-9]+)$/i);
@@ -2051,227 +1757,22 @@ async function getAudioDuration(file) {
   }
 }
 
-async function loadFfmpeg() {
-  if (ffmpegState.instance) {
-    return ffmpegState;
-  }
-  if (ffmpegState.loading) {
-    return ffmpegState.loading;
-  }
-  ffmpegState.loading = (async () => {
-    let ffmpeg;
-    try {
-      setProgressStatus("Initialisation de FFmpeg...");
-      const ffmpegGlobal = window.FFmpegWASM;
-      if (!ffmpegGlobal || !ffmpegGlobal.FFmpeg) {
-        throw new Error("FFmpeg non chargé. Vérifiez vendor/ffmpeg/ffmpeg.js.");
-      }
-      ffmpeg = new ffmpegGlobal.FFmpeg();
-      const baseURL = new URL(FFMPEG_BASE_PATH, window.location.href);
-      const coreURL = new URL(FFMPEG_CORE_FILE, baseURL).toString();
-      const wasmURL = new URL(FFMPEG_WASM_FILE, baseURL).toString();
-      let slowTimer;
-      let timeoutId;
-      try {
-        slowTimer = setTimeout(() => {
-          setProgressStatus("Initialisation en cours... (peut prendre 1-2 min)");
-        }, 15000);
-        const timeoutPromise = new Promise((_, reject) => {
-          timeoutId = setTimeout(() => {
-            reject(new Error("Initialisation FFmpeg trop longue."));
-          }, 90000);
-        });
-        await Promise.race([ffmpeg.load({ coreURL, wasmURL }), timeoutPromise]);
-      } finally {
-        clearTimeout(slowTimer);
-        clearTimeout(timeoutId);
-      }
-      progressLine = null;
-      ffmpegState.instance = ffmpeg;
-      ffmpegState.loading = null;
-      return ffmpegState;
-    } catch (error) {
-      if (ffmpeg?.terminate) {
-        try {
-          ffmpeg.terminate();
-        } catch (err) {
-          // Ignore terminate failures.
-        }
-      }
-      ffmpegState.loading = null;
-      progressLine = null;
-      throw error;
-    }
-  })();
-  return ffmpegState.loading;
-}
-
-async function toUint8Array(file) {
-  if (file instanceof Uint8Array) return file;
-  if (file instanceof ArrayBuffer) return new Uint8Array(file);
-  if (file?.arrayBuffer) {
-    return new Uint8Array(await file.arrayBuffer());
-  }
-  return new Uint8Array();
-}
-
-function buildSegmentPlan(durationSeconds) {
-  const segments = [];
-  let baseStart = 0;
-  let index = 1;
-  while (baseStart < durationSeconds) {
-    const baseEnd = Math.min(durationSeconds, baseStart + SEGMENT_TARGET_SECONDS);
-    const start = Math.max(0, baseStart - SEGMENT_OVERLAP_SECONDS);
-    const end = Math.min(durationSeconds, baseEnd + SEGMENT_OVERLAP_SECONDS);
-    segments.push({
-      index,
-      startSeconds: start,
-      endSeconds: end,
-      baseStartSeconds: baseStart,
-      baseEndSeconds: baseEnd,
-    });
-    baseStart += SEGMENT_TARGET_SECONDS;
-    index += 1;
-  }
-  return segments;
-}
-
-async function ffmpegSegmentByDuration(file, durationSeconds, options = {}) {
-  const { signal } = options;
-  throwIfAborted(signal);
-  const totalSegments = Math.ceil(durationSeconds / SEGMENT_TARGET_SECONDS);
-  setStatus(
-    `Durée > ${formatDuration(SEGMENT_TARGET_SECONDS)} : découpe en ${totalSegments} segment(s) de ${formatDuration(
-      SEGMENT_TARGET_SECONDS,
-    )} avec chevauchement ${SEGMENT_OVERLAP_SECONDS}s.`,
-  );
-  const { instance: ffmpeg } = await loadFfmpeg();
-  const inputExtension = getFileExtension(file);
-  const inputName = `input.${inputExtension}`;
-  const mimeType = mimeFromExtension(inputExtension);
-  await ffmpeg.writeFile(inputName, await toUint8Array(file));
-
-  const plan = buildSegmentPlan(durationSeconds);
-  const chunks = [];
-  try {
-    for (const segment of plan) {
-      throwIfAborted(signal);
-      const segmentDuration = Math.max(0, segment.endSeconds - segment.startSeconds);
-      const outputName = `segment-${String(segment.index).padStart(3, "0")}.${inputExtension}`;
-      setProgressStatus(
-        `Découpe FFmpeg : segment ${segment.index}/${plan.length} (${formatDuration(segmentDuration)}).`,
-      );
-      await ffmpeg.exec([
-        "-ss",
-        `${segment.startSeconds}`,
-        "-i",
-        inputName,
-        "-t",
-        `${segmentDuration}`,
-        "-map",
-        "0:a",
-        "-c",
-        "copy",
-        outputName,
-      ]);
-      const data = await ffmpeg.readFile(outputName);
-      await ffmpeg.deleteFile(outputName);
-      const baseDuration = Math.max(0, segment.baseEndSeconds - segment.baseStartSeconds);
-      chunks.push({
-        blob: new Blob([data], { type: mimeType }),
-        index: segment.index,
-        extension: inputExtension,
-        startSeconds: segment.startSeconds,
-        endSeconds: segment.endSeconds,
-        durationSeconds: segmentDuration,
-        baseDurationSeconds: baseDuration,
-        baseStartSeconds: segment.baseStartSeconds,
-        baseEndSeconds: segment.baseEndSeconds,
-      });
-    }
-  } finally {
-    try {
-      await ffmpeg.deleteFile(inputName);
-    } catch (error) {
-      // Ignore cleanup failures.
-    }
-  }
-  progressLine = null;
-  const totalSize = chunks.reduce((sum, chunk) => sum + chunk.blob.size, 0);
-  setStatus(
-    `Préparation terminée : ${chunks.length} segment(s) · ${formatBytes(totalSize)}.`,
-  );
-  return {
-    chunks,
-    totalSize,
-    usedOriginal: false,
-    usedCompression: true,
-  };
-}
-
-async function prepareFile(file, options = {}) {
-  const { signal } = options;
-  throwIfAborted(signal);
-  const duration = await getAudioDuration(file);
-  if (!Number.isFinite(duration) || duration <= 0) {
-    throw new Error("Durée audio invalide.");
-  }
-  throwIfAborted(signal);
-
-  if (duration <= SEGMENT_TARGET_SECONDS) {
-    setStatus("Fichier accepté sans découpage.");
-    return {
-      chunks: [
-        {
-          blob: file,
-          index: 1,
-          isOriginal: true,
-          startSeconds: 0,
-          endSeconds: duration,
-          durationSeconds: duration,
-          baseDurationSeconds: duration,
-          baseStartSeconds: 0,
-          baseEndSeconds: duration,
-        },
-      ],
-      totalSize: file.size,
-      usedOriginal: true,
-    };
-  }
-
-  return ffmpegSegmentByDuration(file, duration, { signal });
-}
-
 async function analyzeFile(file) {
   if (!file || state.processing) return;
-  state.cancelRequested = false;
-  setProcessing(true);
   clearStatus();
   setStatus("Analyse du fichier audio…");
 
-  const controller = new AbortController();
-  state.abortController = controller;
-
   try {
-    const prepared = await prepareFile(file, { signal: controller.signal });
+    const duration = await getAudioDuration(file);
     if (state.file !== file) return;
-    state.prepared = { ...prepared, file };
-    setSegments(prepared.chunks, file);
-    if (!prepared.usedOriginal) {
-      setStatus(`Taille finale : ${formatBytes(prepared.totalSize)}.`);
+    state.durationSeconds = Number.isFinite(duration) ? duration : null;
+    if (Number.isFinite(duration)) {
+      setStatus(`Durée : ${formatDuration(duration)}.`);
     }
   } catch (error) {
-    if (state.cancelRequested || isAbortError(error)) {
-      setStatus("Analyse annulee.");
-    } else {
-      setStatus("Erreur pendant l'analyse.");
-      const message = error instanceof Error ? error.message : String(error);
-      setStatus(message);
-    }
-  } finally {
-    state.cancelRequested = false;
-    setProcessing(false);
-    state.abortController = null;
+    setStatus("Erreur pendant l'analyse.");
+    const message = error instanceof Error ? error.message : String(error);
+    setStatus(message);
   }
 }
 
@@ -2282,26 +1783,21 @@ function cancelTranscription() {
   setStatus("Annulation demandee.");
 }
 
-async function transcribeChunk({
+async function transcribeFile({
   apiKey,
   language,
   diarize,
   stream,
   onPartial,
   onProgress,
-  chunk,
-  chunkIndex,
-  totalChunks,
   file,
-  baseName,
   signal,
 }) {
-  const filename = buildSegmentFilename(baseName, file, chunk);
+  const filename = file?.name || `audio.${getFileExtension(file)}`;
   throwIfAborted(signal);
-  setStatus(`Transcription segment ${chunkIndex + 1}/${totalChunks}...`);
 
   const formData = new FormData();
-  formData.append("file", chunk.blob, filename);
+  formData.append("file", file, filename);
   formData.append("model", MODEL_ID);
   if (language) {
     formData.append("language", language);
@@ -2354,35 +1850,7 @@ async function transcribeChunk({
     return data;
   }
 
-  const durationSeconds = Number(chunk?.durationSeconds ?? 0);
-  const baseDurationSeconds = Number(chunk?.baseDurationSeconds ?? 0);
-  const baseStartSeconds = Number(chunk?.baseStartSeconds ?? 0);
-  const baseEndSeconds = Number(chunk?.baseEndSeconds ?? baseStartSeconds + baseDurationSeconds);
-  const chunkStartSeconds = Number(chunk?.startSeconds ?? 0);
-  const progressHandler =
-    onProgress &&
-    Number.isFinite(durationSeconds) &&
-    durationSeconds > 0 &&
-    Number.isFinite(chunkStartSeconds)
-      ? (elapsedSeconds) => {
-          if (
-            Number.isFinite(baseDurationSeconds) &&
-            baseDurationSeconds > 0 &&
-            Number.isFinite(baseEndSeconds)
-          ) {
-            const absoluteEnd = chunkStartSeconds + elapsedSeconds;
-            const clamped = Math.min(
-              Math.max(absoluteEnd, baseStartSeconds),
-              baseEndSeconds,
-            );
-            const progressSeconds = Math.max(0, clamped - baseStartSeconds);
-            onProgress(Math.min(1, progressSeconds / baseDurationSeconds));
-            return;
-          }
-          const ratio = Math.min(1, Math.max(0, elapsedSeconds / durationSeconds));
-          onProgress(ratio);
-        }
-      : null;
+  const progressHandler = onProgress ? (elapsedSeconds) => onProgress(elapsedSeconds) : null;
 
   return readTranscriptionStream(response, {
     signal,
@@ -2417,135 +1885,66 @@ async function transcribe() {
   setStatus("Analyse du fichier audio…");
 
   try {
-    const baseName = sanitizeBaseName(file.name);
     const controller = new AbortController();
     state.abortController = controller;
     const { signal } = controller;
 
-    const cached = state.prepared && state.prepared.file === file;
-    const prepared = cached ? state.prepared : await prepareFile(file, { signal });
-    if (!cached) {
-      state.prepared = { ...prepared, file };
+    let durationSeconds = state.durationSeconds;
+    if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+      try {
+        durationSeconds = await getAudioDuration(file);
+      } catch (error) {
+        durationSeconds = null;
+      }
     }
-    const { chunks, totalSize, usedOriginal } = prepared;
-    if (!state.segments.length) {
-      setSegments(chunks, file);
-    }
-    if (!usedOriginal && !cached) {
-      setStatus(`Taille finale : ${formatBytes(totalSize)}.`);
+    throwIfAborted(signal);
+    const hasDuration = Number.isFinite(durationSeconds) && durationSeconds > 0;
+    if (hasDuration) {
+      state.durationSeconds = durationSeconds;
     }
 
-    const totalChunks = chunks.length;
-    if (!totalChunks) {
-      throw new Error("Aucun segment a transcrire.");
-    }
-    const transcriptParts = new Array(totalChunks).fill("");
-    const updateLiveTranscript = streamingEnabled
-      ? createLiveTranscriptUpdater(transcriptParts)
-      : null;
-    const progressState = buildProgressState(chunks);
-    const updateProgressBar = createProgressUpdater(progressState, "Transcription en cours");
-    const updateChunkProgress = (chunkIndex, progress) => {
-      const clamped = Number.isFinite(progress) ? Math.min(1, Math.max(0, progress)) : 0;
-      if (progressState.progress[chunkIndex] >= clamped) return;
-      progressState.progress[chunkIndex] = clamped;
-      updateProgressBar();
-    };
-    setProgressStatus(`Transcription : 0/${totalChunks} segment(s) termines.`);
-    updateProgressBar(true);
-
-    const parallelLimit = Math.max(1, Math.min(MAX_PARALLEL_REQUESTS, totalChunks));
-    let completed = 0;
-    let active = 0;
-    let nextIndex = 0;
-    let finished = false;
-
-    await new Promise((resolve, reject) => {
-      const launchNext = () => {
-        if (finished) return;
-        if (signal.aborted) {
-          finished = true;
-          reject(createAbortError());
-          return;
-        }
-        while (active < parallelLimit && nextIndex < totalChunks) {
-          const chunkIndex = nextIndex;
-          nextIndex += 1;
-          const chunk = chunks[chunkIndex];
-          active += 1;
-          transcribeChunk({
-            apiKey,
-            language,
-            diarize,
-            stream: streamingEnabled,
-            onPartial: updateLiveTranscript
-              ? (text) => {
-                  if (transcriptParts[chunkIndex] === text) return;
-                  transcriptParts[chunkIndex] = text;
-                  updateLiveTranscript();
-                }
-              : null,
-            onProgress: streamingEnabled
-              ? (progress) => {
-                  updateChunkProgress(chunkIndex, progress);
-                }
-              : null,
-            chunk,
-            chunkIndex,
-            totalChunks,
-            file,
-            baseName,
-            signal,
-          })
-            .then((data) => {
-              if (finished) return;
-              const rawText =
-                typeof data.text === "string" ? data.text : transcriptParts[chunkIndex] || "";
-              const segmentsText = buildTranscriptFromSegments(data.segments, { diarize });
-              const chunkText = (
-                segmentsText.length > rawText.length ? segmentsText : rawText
-              ).trim();
-              transcriptParts[chunkIndex] = chunkText;
-              if (updateLiveTranscript) {
-                updateLiveTranscript(true);
-              }
-              updateChunkProgress(chunkIndex, 1);
-              applyUsage(data.usage);
-              completed += 1;
-              setProgressStatus(
-                `Transcription : ${completed}/${totalChunks} segment(s) termines.`,
-              );
-              active -= 1;
-              if (completed >= totalChunks) {
-                finished = true;
-                resolve();
-                return;
-              }
-              launchNext();
-            })
-            .catch((error) => {
-              if (finished) return;
-              active -= 1;
-              if (!isAbortError(error)) {
-                finished = true;
-                controller.abort();
-                reject(error);
-                return;
-              }
-              if (signal.aborted) {
-                finished = true;
-                reject(error);
-              }
-            });
-        }
-      };
-      launchNext();
+    setProgressStatus("Transcription en cours...");
+    setProgressBar({
+      label: "Transcription en cours",
+      current: 0,
+      total: hasDuration ? durationSeconds : 0,
+      meta: hasDuration ? `0 / ${formatDuration(durationSeconds)}` : "Transcription en cours...",
     });
 
-    const fullTranscript = mergeTranscriptParts(transcriptParts);
-    const transcriptValue = fullTranscript || "(Aucun texte retourne)";
+    const updateLiveTranscript = streamingEnabled
+      ? (text) => {
+          elements.transcript.value = text;
+        }
+      : null;
+    const updateProgress = streamingEnabled && hasDuration
+      ? (elapsedSeconds) => {
+          const clamped = Math.min(Math.max(elapsedSeconds, 0), durationSeconds);
+          setProgressBar({
+            label: "Transcription en cours",
+            current: clamped,
+            total: durationSeconds,
+            meta: `${formatDuration(clamped)} / ${formatDuration(durationSeconds)}`,
+          });
+        }
+      : null;
+
+    const data = await transcribeFile({
+      apiKey,
+      language,
+      diarize,
+      stream: streamingEnabled,
+      onPartial: updateLiveTranscript,
+      onProgress: updateProgress,
+      file,
+      signal,
+    });
+
+    const rawText = typeof data.text === "string" ? data.text : "";
+    const segmentsText = diarize ? buildTranscriptFromSegments(data.segments, { diarize }) : "";
+    const transcriptValue = (segmentsText || rawText || "(Aucun texte retourne)").trim();
     elements.transcript.value = transcriptValue;
-    const estimatedTokens = estimateTokens(fullTranscript);
+    applyUsage(data.usage);
+    const estimatedTokens = estimateTokens(transcriptValue);
     if (!state.usageSeen) {
       setTokens({
         input: "—",
@@ -2561,8 +1960,8 @@ async function transcribe() {
         estimate: estimatedTokens || "—",
       });
     }
-    setStatus("Transcription terminee. Chevauchements nettoyes.");
-    if (state.historyEnabled && fullTranscript.trim()) {
+    setStatus("Transcription terminee.");
+    if (state.historyEnabled && transcriptValue.trim()) {
       const entry = createHistoryEntry({
         text: transcriptValue,
         file,
@@ -2629,27 +2028,6 @@ elements.transcribeBtn.addEventListener("click", () => {
 if (elements.cancelBtn) {
   elements.cancelBtn.addEventListener("click", () => {
     cancelTranscription();
-  });
-}
-
-if (elements.downloadSegmentsBtn) {
-  elements.downloadSegmentsBtn.addEventListener("click", () => {
-    if (!state.segments.length) return;
-    for (const segment of state.segments) {
-      const link = document.createElement("a");
-      link.href = segment.url;
-      link.download = segment.filename;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    }
-    setStatus("Téléchargement des segments lancé.");
-  });
-}
-
-if (elements.segmentsToggleBtn) {
-  elements.segmentsToggleBtn.addEventListener("click", () => {
-    setSegmentsVisibility(!state.segmentsVisible);
   });
 }
 
