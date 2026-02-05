@@ -74,6 +74,8 @@ const elements = {
   usageHint: document.getElementById("usageHint"),
   speakerPanel: document.getElementById("speakerPanel"),
   speakerList: document.getElementById("speakerList"),
+  speakerViewToggle: document.getElementById("speakerViewToggle"),
+  speakerViewRow: document.getElementById("speakerViewRow"),
   themeButtons: document.querySelectorAll("[data-theme-choice]"),
   themeCycle: document.getElementById("themeCycle"),
   topbar: document.querySelector(".topbar"),
@@ -101,6 +103,10 @@ const state = {
   speakerSegments: [],
   speakerMeta: [],
   speakerNames: {},
+  speakerCanonicalText: "",
+  speakerPlainText: "",
+  speakerViewMode: "speakers",
+  speakerAvailable: false,
   history: [],
   historyEnabled: true,
   historyQuery: "",
@@ -197,11 +203,29 @@ function truncateSpeakerExample(text, maxLength = 180) {
   return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
 }
 
+function buildPlainTranscriptFromSegments(segments) {
+  if (!Array.isArray(segments) || !segments.length) return "";
+  const parts = segments
+    .map((segment) => (segment?.text || "").trim())
+    .filter(Boolean);
+  if (!parts.length) return "";
+  return parts.join(" ").replace(/\s+/g, " ").trim();
+}
+
+function splitIntoSentences(text) {
+  const normalized = String(text || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized) return [];
+  const matches = normalized.match(/[^.!?…]+[.!?…]+|[^.!?…]+$/g);
+  if (!matches) return [normalized];
+  return matches.map((sentence) => sentence.trim()).filter(Boolean);
+}
+
 function buildSpeakerMeta(segments) {
   const order = [];
   const seen = new Set();
   const examplesByKey = new Map();
-  const seenExamples = new Map();
 
   segments.forEach((segment) => {
     const key = getSpeakerKey(segment) || "unknown";
@@ -211,15 +235,16 @@ function buildSpeakerMeta(segments) {
     }
     const text = typeof segment?.text === "string" ? segment.text.trim() : "";
     if (!text) return;
-    const exampleSet = seenExamples.get(key) || new Set();
-    if (exampleSet.has(text)) return;
-    exampleSet.add(text);
-    seenExamples.set(key, exampleSet);
+    const sentences = splitIntoSentences(text);
+    if (!sentences.length) return;
     const examples = examplesByKey.get(key) || [];
-    if (examples.length < 3) {
-      examples.push(text);
-      examplesByKey.set(key, examples);
+    for (const sentence of sentences) {
+      if (examples.length >= 10) break;
+      if (!sentence) continue;
+      if (examples.includes(sentence)) continue;
+      examples.push(sentence);
     }
+    examplesByKey.set(key, examples);
   });
 
   return order.map((key) => ({
@@ -293,10 +318,27 @@ function parseSpeakerTranscript(text) {
   return segments;
 }
 
+function setSpeakerAvailability(isAvailable) {
+  state.speakerAvailable = Boolean(isAvailable);
+  if (elements.speakerViewRow) {
+    elements.speakerViewRow.hidden = !state.speakerAvailable;
+  }
+  if (!state.speakerAvailable && elements.speakerPanel) {
+    elements.speakerPanel.hidden = true;
+  }
+}
+
 function clearSpeakerState() {
   state.speakerSegments = [];
   state.speakerMeta = [];
   state.speakerNames = {};
+  state.speakerCanonicalText = "";
+  state.speakerPlainText = "";
+  state.speakerViewMode = "speakers";
+  setSpeakerAvailability(false);
+  if (elements.speakerViewToggle) {
+    elements.speakerViewToggle.checked = false;
+  }
   if (speakerUpdateTimer) {
     clearTimeout(speakerUpdateTimer);
     speakerUpdateTimer = null;
@@ -329,15 +371,28 @@ function updateTokenEstimateFromTranscript(transcriptValue) {
   updateUsageHint();
 }
 
+function updateSpeakerTranscriptDisplay() {
+  if (!state.speakerAvailable) return;
+  const usePlain = state.speakerViewMode === "plain";
+  const nextValue = usePlain
+    ? state.speakerPlainText || state.speakerCanonicalText
+    : state.speakerCanonicalText || state.speakerPlainText;
+  if (nextValue) {
+    elements.transcript.value = nextValue;
+    updateSummaryControls();
+    updateTokenEstimateFromTranscript(nextValue);
+  }
+}
+
 function applySpeakerNamesToTranscript({ syncHistory = true } = {}) {
   if (!state.speakerSegments.length) return;
   const transcriptValue = buildTranscriptFromSegments(state.speakerSegments, {
     diarize: true,
     speakerNames: state.speakerNames,
   });
-  elements.transcript.value = transcriptValue;
-  updateSummaryControls();
-  updateTokenEstimateFromTranscript(transcriptValue);
+  state.speakerCanonicalText = transcriptValue;
+  state.speakerPlainText = buildPlainTranscriptFromSegments(state.speakerSegments);
+  updateSpeakerTranscriptDisplay();
   if (syncHistory) {
     updateActiveHistoryText(transcriptValue);
   }
@@ -355,7 +410,7 @@ function scheduleSpeakerTranscriptUpdate() {
 
 function renderSpeakerPanel() {
   if (!elements.speakerPanel || !elements.speakerList) return;
-  if (!state.speakerSegments.length || !state.speakerMeta.length) {
+  if (!state.speakerAvailable || !state.speakerSegments.length || !state.speakerMeta.length) {
     elements.speakerPanel.hidden = true;
     elements.speakerList.innerHTML = "";
     return;
@@ -400,18 +455,17 @@ function renderSpeakerPanel() {
 
     const examplesToggle = document.createElement("button");
     examplesToggle.type = "button";
-    examplesToggle.className = "ghost speaker-examples-toggle";
+    examplesToggle.className = "speaker-examples-toggle";
     examplesToggle.textContent = "Afficher exemples";
 
     const examples = document.createElement("div");
-    examples.className = "speaker-examples";
-    examples.hidden = true;
+    examples.className = "speaker-examples is-hidden";
 
     if (meta.examples.length) {
-      meta.examples.forEach((exampleText) => {
+      meta.examples.forEach((exampleText, index) => {
         const example = document.createElement("div");
         example.className = "speaker-example";
-        example.textContent = truncateSpeakerExample(exampleText);
+        example.textContent = `${index + 1}. ${truncateSpeakerExample(exampleText, 160)}`;
         examples.appendChild(example);
       });
     } else {
@@ -424,9 +478,10 @@ function renderSpeakerPanel() {
     }
 
     examplesToggle.addEventListener("click", () => {
-      const nextHidden = !examples.hidden;
-      examples.hidden = nextHidden;
-      examplesToggle.textContent = nextHidden ? "Afficher exemples" : "Masquer exemples";
+      const willShow = examples.classList.contains("is-hidden");
+      examples.classList.toggle("is-hidden", !willShow);
+      examplesToggle.classList.toggle("is-open", willShow);
+      examplesToggle.textContent = willShow ? "Masquer exemples" : "Afficher exemples";
     });
 
     actions.appendChild(examplesToggle);
@@ -440,11 +495,20 @@ function renderSpeakerPanel() {
   elements.speakerList.appendChild(fragment);
 }
 
-function setSpeakerStateFromSegments(segments) {
+function setSpeakerStateFromSegments(segments, { baseText = "", diarized = true } = {}) {
   state.speakerSegments = Array.isArray(segments) ? segments : [];
   state.speakerMeta = buildSpeakerMeta(state.speakerSegments);
   state.speakerNames = {};
+  state.speakerCanonicalText =
+    baseText || buildTranscriptFromSegments(state.speakerSegments, { diarize: true });
+  state.speakerPlainText = buildPlainTranscriptFromSegments(state.speakerSegments);
+  state.speakerViewMode = "speakers";
+  if (elements.speakerViewToggle) {
+    elements.speakerViewToggle.checked = true;
+  }
+  setSpeakerAvailability(diarized && state.speakerSegments.length > 0);
   renderSpeakerPanel();
+  updateSpeakerTranscriptDisplay();
 }
 
 function formatHistoryDate(timestamp) {
@@ -1367,6 +1431,7 @@ function loadHistoryEntries() {
           text,
           fileName: typeof entry.fileName === "string" ? entry.fileName : "",
           durationSeconds: Number.isFinite(entry.durationSeconds) ? entry.durationSeconds : null,
+          diarized: Boolean(entry.diarized),
           usageSeen: Boolean(entry.usageSeen),
           tokens: {
             input: Number(tokens.input) || 0,
@@ -1401,6 +1466,7 @@ function serializeHistoryEntries(entries) {
     text: typeof entry.text === "string" ? entry.text : "",
     fileName: typeof entry.fileName === "string" ? entry.fileName : "",
     durationSeconds: Number.isFinite(entry.durationSeconds) ? entry.durationSeconds : null,
+    diarized: Boolean(entry.diarized),
     usageSeen: Boolean(entry.usageSeen),
     tokens: {
       input: Number(entry.tokens?.input) || 0,
@@ -1650,7 +1716,15 @@ function setHistoryEnabled(enabled) {
   renderHistory();
 }
 
-function createHistoryEntry({ text, file, durationSeconds, usage, usageSeen, estimate }) {
+function createHistoryEntry({
+  text,
+  file,
+  durationSeconds,
+  usage,
+  usageSeen,
+  estimate,
+  diarized = false,
+}) {
   const createdAt = Date.now();
   const id = `hist-${createdAt}-${Math.random().toString(36).slice(2, 8)}`;
   return {
@@ -1660,6 +1734,7 @@ function createHistoryEntry({ text, file, durationSeconds, usage, usageSeen, est
     text,
     fileName: file?.name || "",
     durationSeconds: Number.isFinite(durationSeconds) ? durationSeconds : null,
+    diarized: Boolean(diarized),
     usageSeen: Boolean(usageSeen),
     tokens: {
       input: Number(usage?.input) || 0,
@@ -1693,7 +1768,11 @@ function openHistoryEntry(id) {
   clearSpeakerState();
   const parsedSegments = parseSpeakerTranscript(entry.text);
   if (parsedSegments.length) {
-    setSpeakerStateFromSegments(parsedSegments);
+    if (!entry.diarized) {
+      entry.diarized = true;
+      saveHistoryEntries();
+    }
+    setSpeakerStateFromSegments(parsedSegments, { baseText: entry.text, diarized: true });
   }
   const estimatedTokens = entry.tokens?.estimate || estimateTokens(entry.text);
   if (entry.usageSeen) {
@@ -2252,20 +2331,19 @@ async function transcribe() {
       signal,
     });
 
+    const rawText = typeof data.text === "string" ? data.text : "";
+    let transcriptValue = "";
     if (diarize && Array.isArray(data.segments) && data.segments.length) {
-      setSpeakerStateFromSegments(data.segments);
+      setSpeakerStateFromSegments(data.segments, { diarized: true });
+      transcriptValue =
+        state.speakerCanonicalText ||
+        buildTranscriptFromSegments(data.segments, { diarize, speakerNames: state.speakerNames });
     } else {
       clearSpeakerState();
+      transcriptValue = rawText || "(Aucun texte retourne)";
+      elements.transcript.value = transcriptValue;
     }
-    const rawText = typeof data.text === "string" ? data.text : "";
-    const segmentsText = diarize
-      ? buildTranscriptFromSegments(data.segments, {
-          diarize,
-          speakerNames: state.speakerNames,
-        })
-      : "";
-    const transcriptValue = (segmentsText || rawText || "(Aucun texte retourne)").trim();
-    elements.transcript.value = transcriptValue;
+    transcriptValue = String(transcriptValue || "").trim() || "(Aucun texte retourne)";
     applyUsage(data.usage);
     const estimatedTokens = estimateTokens(transcriptValue);
     if (!state.usageSeen) {
@@ -2292,6 +2370,7 @@ async function transcribe() {
         usage: state.usage,
         usageSeen: state.usageSeen,
         estimate: estimatedTokens,
+        diarized: diarize,
       });
       addHistoryEntry(entry);
     }
@@ -2401,6 +2480,14 @@ if (elements.diarizationToggle && elements.streamingToggle) {
   });
   elements.streamingToggle.addEventListener("change", () => {
     syncDiarizationConstraints(true);
+  });
+}
+
+if (elements.speakerViewToggle) {
+  elements.speakerViewToggle.addEventListener("change", () => {
+    if (!state.speakerAvailable) return;
+    state.speakerViewMode = elements.speakerViewToggle.checked ? "speakers" : "plain";
+    updateSpeakerTranscriptDisplay();
   });
 }
 
@@ -2834,8 +2921,8 @@ initTopbarObserver();
 loadHistoryState();
 const shouldOpenHistory = !window.matchMedia("(max-width: 720px)").matches;
 setHistoryPanelOpen(shouldOpenHistory);
-setSegmentsVisibility(false);
 clearSummary();
+clearSpeakerState();
 updateSummaryControls();
 clearStatus();
 setStatus("Prêt.", true);

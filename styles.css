@@ -798,6 +798,10 @@ textarea {
   resize: vertical;
 }
 
+.speaker-view-row {
+  margin-top: 8px;
+}
+
 .speaker-panel .panel-body {
   display: grid;
   gap: 12px;
@@ -851,17 +855,52 @@ textarea {
   gap: 8px;
 }
 
+.speaker-examples-toggle {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.speaker-examples-toggle::after {
+  content: ">";
+  display: inline-block;
+  transform: rotate(0deg);
+  transition: transform 0.2s ease;
+}
+
+.speaker-examples-toggle.is-open::after {
+  transform: rotate(90deg);
+}
+
+.speaker-examples-toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .speaker-examples {
   display: grid;
-  gap: 6px;
+  gap: 4px;
+}
+
+.speaker-examples.is-hidden {
+  display: none;
 }
 
 .speaker-example {
-  padding: 8px 10px;
+  padding: 6px 8px;
   border-radius: 12px;
   border: 1px dashed var(--border);
   background: var(--panel-subtle);
-  font-size: 0.9rem;
+  font-size: 0.85rem;
+  line-height: 1.35;
   color: var(--muted);
 }
 
