@@ -72,6 +72,8 @@ const elements = {
   tokensEstimate: document.getElementById("tokensEstimate"),
   tokensPrice: document.getElementById("tokensPrice"),
   usageHint: document.getElementById("usageHint"),
+  speakerPanel: document.getElementById("speakerPanel"),
+  speakerList: document.getElementById("speakerList"),
   themeButtons: document.querySelectorAll("[data-theme-choice]"),
   themeCycle: document.getElementById("themeCycle"),
   topbar: document.querySelector(".topbar"),
@@ -96,6 +98,9 @@ const state = {
   processing: false,
   abortController: null,
   cancelRequested: false,
+  speakerSegments: [],
+  speakerMeta: [],
+  speakerNames: {},
   history: [],
   historyEnabled: true,
   historyQuery: "",
@@ -107,6 +112,7 @@ const state = {
 
 let progressLine = null;
 let tokenLine = null;
+let speakerUpdateTimer = null;
 const THEME_CHOICES = ["system", "light", "dark"];
 const themeIconMap = {};
 let topbarObserver = null;
@@ -133,42 +139,247 @@ function formatDuration(seconds) {
   return `${hours} h ${minutes} min`;
 }
 
-function formatSpeakerLabel(segment) {
+function getSpeakerKey(segment) {
   if (!segment || typeof segment !== "object") return "";
   const raw =
-    segment.speaker ??
     segment.speaker_id ??
     segment.speakerId ??
+    segment.speaker ??
     segment.speaker_label ??
     segment.speakerLabel ??
     segment.speaker_name ??
     segment.speakerName;
   if (raw == null) return "";
-  const value = String(raw).trim();
+  return String(raw).trim();
+}
+
+function getDefaultSpeakerLabel(key) {
+  const value = String(key || "").trim();
   if (!value) return "";
   const speakerMatch = value.match(/speaker[\s_-]*(\d+)/i);
   if (speakerMatch) return `Locuteur ${speakerMatch[1]}`;
   const locuteurMatch = value.match(/locuteur[\s_-]*(\d+)/i);
   if (locuteurMatch) return `Locuteur ${locuteurMatch[1]}`;
+  if (/unknown|inconnu/i.test(value)) return "Locuteur inconnu";
   if (/speaker|locuteur/i.test(value)) return value;
   if (value === "0") return "Locuteur 0";
   if (value === "1") return "Locuteur 1";
   return `Locuteur ${value}`;
 }
 
-function buildTranscriptFromSegments(segments, { diarize = false } = {}) {
+function resolveSpeakerLabel(segment, speakerNames = {}) {
+  const key = getSpeakerKey(segment) || "unknown";
+  const custom = speakerNames?.[key];
+  if (custom && custom.trim()) return custom.trim();
+  return getDefaultSpeakerLabel(key) || "Locuteur";
+}
+
+function buildTranscriptFromSegments(segments, { diarize = false, speakerNames = {} } = {}) {
   if (!Array.isArray(segments) || !segments.length) return "";
   return segments
     .map((segment) => {
       const text = (segment?.text || "").trim();
       if (!text) return "";
       if (!diarize) return text;
-      const speaker = formatSpeakerLabel(segment);
+      const speaker = resolveSpeakerLabel(segment, speakerNames);
       if (!speaker) return text;
       return `${speaker}: ${text}`;
     })
     .filter(Boolean)
     .join("\n");
+}
+
+function truncateSpeakerExample(text, maxLength = 180) {
+  const normalized = String(text || "").trim();
+  if (!normalized) return "";
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
+function buildSpeakerMeta(segments) {
+  const order = [];
+  const seen = new Set();
+  const examplesByKey = new Map();
+  const seenExamples = new Map();
+
+  segments.forEach((segment) => {
+    const key = getSpeakerKey(segment) || "unknown";
+    if (!seen.has(key)) {
+      seen.add(key);
+      order.push(key);
+    }
+    const text = typeof segment?.text === "string" ? segment.text.trim() : "";
+    if (!text) return;
+    const exampleSet = seenExamples.get(key) || new Set();
+    if (exampleSet.has(text)) return;
+    exampleSet.add(text);
+    seenExamples.set(key, exampleSet);
+    const examples = examplesByKey.get(key) || [];
+    if (examples.length < 3) {
+      examples.push(text);
+      examplesByKey.set(key, examples);
+    }
+  });
+
+  return order.map((key) => ({
+    key,
+    label: getDefaultSpeakerLabel(key) || "Locuteur",
+    examples: examplesByKey.get(key) || [],
+  }));
+}
+
+function clearSpeakerState() {
+  state.speakerSegments = [];
+  state.speakerMeta = [];
+  state.speakerNames = {};
+  if (speakerUpdateTimer) {
+    clearTimeout(speakerUpdateTimer);
+    speakerUpdateTimer = null;
+  }
+  if (elements.speakerList) {
+    elements.speakerList.innerHTML = "";
+  }
+  if (elements.speakerPanel) {
+    elements.speakerPanel.hidden = true;
+  }
+}
+
+function updateTokenEstimateFromTranscript(transcriptValue) {
+  const estimate = estimateTokens(transcriptValue || "");
+  if (state.usageSeen) {
+    setTokens({
+      input: state.usage.input || "—",
+      output: state.usage.output || "—",
+      total: state.usage.total || "—",
+      estimate: estimate || "—",
+    });
+  } else {
+    setTokens({
+      input: "—",
+      output: "—",
+      total: "—",
+      estimate: estimate || "—",
+    });
+  }
+  updateUsageHint();
+}
+
+function applySpeakerNamesToTranscript({ syncHistory = true } = {}) {
+  if (!state.speakerSegments.length) return;
+  const transcriptValue = buildTranscriptFromSegments(state.speakerSegments, {
+    diarize: true,
+    speakerNames: state.speakerNames,
+  });
+  elements.transcript.value = transcriptValue;
+  updateSummaryControls();
+  updateTokenEstimateFromTranscript(transcriptValue);
+  if (syncHistory) {
+    updateActiveHistoryText(transcriptValue);
+  }
+}
+
+function scheduleSpeakerTranscriptUpdate() {
+  if (speakerUpdateTimer) {
+    clearTimeout(speakerUpdateTimer);
+  }
+  speakerUpdateTimer = setTimeout(() => {
+    speakerUpdateTimer = null;
+    applySpeakerNamesToTranscript();
+  }, 150);
+}
+
+function renderSpeakerPanel() {
+  if (!elements.speakerPanel || !elements.speakerList) return;
+  if (!state.speakerSegments.length || !state.speakerMeta.length) {
+    elements.speakerPanel.hidden = true;
+    elements.speakerList.innerHTML = "";
+    return;
+  }
+
+  elements.speakerPanel.hidden = false;
+  elements.speakerList.innerHTML = "";
+
+  const fragment = document.createDocumentFragment();
+  state.speakerMeta.forEach((meta) => {
+    const item = document.createElement("div");
+    item.className = "speaker-item";
+    item.dataset.speakerKey = meta.key;
+
+    const row = document.createElement("div");
+    row.className = "speaker-row";
+
+    const label = document.createElement("span");
+    label.className = "speaker-label";
+    label.textContent = meta.label;
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "speaker-input";
+    input.placeholder = meta.label;
+    input.value = state.speakerNames[meta.key] || "";
+    input.addEventListener("input", () => {
+      const value = input.value.trim();
+      if (value) {
+        state.speakerNames[meta.key] = value;
+      } else {
+        delete state.speakerNames[meta.key];
+      }
+      scheduleSpeakerTranscriptUpdate();
+    });
+
+    row.appendChild(label);
+    row.appendChild(input);
+
+    const actions = document.createElement("div");
+    actions.className = "speaker-actions";
+
+    const examplesToggle = document.createElement("button");
+    examplesToggle.type = "button";
+    examplesToggle.className = "ghost speaker-examples-toggle";
+    examplesToggle.textContent = "Afficher exemples";
+
+    const examples = document.createElement("div");
+    examples.className = "speaker-examples";
+    examples.hidden = true;
+
+    if (meta.examples.length) {
+      meta.examples.forEach((exampleText) => {
+        const example = document.createElement("div");
+        example.className = "speaker-example";
+        example.textContent = truncateSpeakerExample(exampleText);
+        examples.appendChild(example);
+      });
+    } else {
+      const empty = document.createElement("div");
+      empty.className = "speaker-example speaker-example-empty";
+      empty.textContent = "Aucun extrait disponible.";
+      examples.appendChild(empty);
+      examplesToggle.disabled = true;
+      examplesToggle.textContent = "Aucun exemple";
+    }
+
+    examplesToggle.addEventListener("click", () => {
+      const nextHidden = !examples.hidden;
+      examples.hidden = nextHidden;
+      examplesToggle.textContent = nextHidden ? "Afficher exemples" : "Masquer exemples";
+    });
+
+    actions.appendChild(examplesToggle);
+
+    item.appendChild(row);
+    item.appendChild(actions);
+    item.appendChild(examples);
+    fragment.appendChild(item);
+  });
+
+  elements.speakerList.appendChild(fragment);
+}
+
+function setSpeakerStateFromSegments(segments) {
+  state.speakerSegments = Array.isArray(segments) ? segments : [];
+  state.speakerMeta = buildSpeakerMeta(state.speakerSegments);
+  state.speakerNames = {};
+  renderSpeakerPanel();
 }
 
 function formatHistoryDate(timestamp) {
@@ -417,6 +628,16 @@ function updateActiveHistoryTitle(title) {
   entry.title = nextTitle;
   saveHistoryEntries();
   renderHistory();
+}
+
+function updateActiveHistoryText(text) {
+  if (!state.historyEnabled) return;
+  const entry = state.history.find((item) => item.id === state.activeHistoryId);
+  if (!entry) return;
+  entry.text = text;
+  entry.tokens = entry.tokens || {};
+  entry.tokens.estimate = Number(estimateTokens(text)) || 0;
+  saveHistoryEntries();
 }
 
 function clearSummary() {
@@ -1404,6 +1625,7 @@ function openHistoryEntry(id) {
   setPanelCollapsedById("hero", true);
   elements.transcript.value = entry.text;
   clearSummary();
+  clearSpeakerState();
   const estimatedTokens = entry.tokens?.estimate || estimateTokens(entry.text);
   if (entry.usageSeen) {
     state.usage = {
@@ -1511,6 +1733,7 @@ function setFile(file) {
   setProcessing(state.processing);
   elements.transcript.value = "";
   clearSummary();
+  clearSpeakerState();
   setTokens({ input: "—", output: "—", total: "—", estimate: "—" });
   updateUsageHint();
 
@@ -1538,6 +1761,7 @@ function setFile(file) {
 function resetTranscriptionState() {
   elements.transcript.value = "";
   clearSummary();
+  clearSpeakerState();
   setTokens({ input: "—", output: "—", total: "—", estimate: "—" });
   state.usage = { input: 0, output: 0, total: 0 };
   state.usageSeen = false;
@@ -1959,8 +2183,18 @@ async function transcribe() {
       signal,
     });
 
+    if (diarize && Array.isArray(data.segments) && data.segments.length) {
+      setSpeakerStateFromSegments(data.segments);
+    } else {
+      clearSpeakerState();
+    }
     const rawText = typeof data.text === "string" ? data.text : "";
-    const segmentsText = diarize ? buildTranscriptFromSegments(data.segments, { diarize }) : "";
+    const segmentsText = diarize
+      ? buildTranscriptFromSegments(data.segments, {
+          diarize,
+          speakerNames: state.speakerNames,
+        })
+      : "";
     const transcriptValue = (segmentsText || rawText || "(Aucun texte retourne)").trim();
     elements.transcript.value = transcriptValue;
     applyUsage(data.usage);
