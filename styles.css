@@ -1310,6 +1310,47 @@ button:disabled {
   height: 14px;
 }
 
+@media (min-width: 981px) {
+  .history-item {
+    gap: 6px;
+    padding: 8px 10px;
+    border-radius: 14px;
+  }
+
+  .history-title {
+    font-size: 0.92rem;
+  }
+
+  .history-meta {
+    font-size: 0.72rem;
+  }
+
+  .history-meta-item {
+    padding: 3px 6px;
+    gap: 4px;
+  }
+
+  .history-badge {
+    padding: 2px 6px;
+    font-size: 0.64rem;
+    letter-spacing: 0.1em;
+  }
+
+  .history-actions {
+    gap: 4px;
+  }
+
+  .history-actions .ghost.icon {
+    width: 28px;
+    height: 28px;
+  }
+
+  .history-actions .ghost.icon svg {
+    width: 12px;
+    height: 12px;
+  }
+}
+
 .footer {
   max-width: 1200px;
   margin: 0 auto 40px;

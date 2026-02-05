@@ -1555,11 +1555,19 @@ function extractApiErrorMessage(errorText) {
   try {
     const parsed = JSON.parse(errorText);
     if (parsed.error?.message) return String(parsed.error.message);
+    if (parsed.error && typeof parsed.error === "string") return parsed.error;
+    if (parsed.error && typeof parsed.error === "object") {
+      return JSON.stringify(parsed.error);
+    }
     if (parsed.message) return String(parsed.message);
     if (Array.isArray(parsed.detail) && parsed.detail[0]?.msg) {
       return String(parsed.detail[0].msg);
     }
-    if (parsed.detail) return String(parsed.detail);
+    if (parsed.detail) {
+      return typeof parsed.detail === "string"
+        ? parsed.detail
+        : JSON.stringify(parsed.detail);
+    }
   } catch (error) {
     // Ignore parse failures.
   }
@@ -1863,7 +1871,7 @@ async function transcribe() {
   const apiKey = elements.apiKey.value.trim();
   const language = elements.language.value.trim();
   const diarize = Boolean(elements.diarizationToggle?.checked);
-  const streamingEnabled = Boolean(elements.streamingToggle?.checked);
+  let streamingEnabled = Boolean(elements.streamingToggle?.checked);
   const file = state.file;
 
   if (!apiKey) {
@@ -1885,6 +1893,14 @@ async function transcribe() {
   setStatus("Analyse du fichier audio…");
 
   try {
+    if (diarize && streamingEnabled) {
+      streamingEnabled = false;
+      if (elements.streamingToggle) {
+        elements.streamingToggle.checked = false;
+      }
+      setStatus("Diarisation incompatible avec le streaming SSE. Streaming désactivé.");
+    }
+
     const controller = new AbortController();
     state.abortController = controller;
     const { signal } = controller;
@@ -2028,6 +2044,32 @@ elements.transcribeBtn.addEventListener("click", () => {
 if (elements.cancelBtn) {
   elements.cancelBtn.addEventListener("click", () => {
     cancelTranscription();
+  });
+}
+
+if (elements.diarizationToggle && elements.streamingToggle) {
+  const syncStreamingAvailability = (showNotice = false) => {
+    const diarize = Boolean(elements.diarizationToggle.checked);
+    const streamingChecked = Boolean(elements.streamingToggle.checked);
+    if (diarize && streamingChecked) {
+      elements.streamingToggle.checked = false;
+      if (showNotice) {
+        setStatus("Diarisation incompatible avec le streaming SSE. Streaming désactivé.");
+      }
+    }
+    elements.streamingToggle.disabled = diarize;
+    if (diarize) {
+      elements.streamingToggle.setAttribute("aria-disabled", "true");
+    } else {
+      elements.streamingToggle.removeAttribute("aria-disabled");
+    }
+  };
+  syncStreamingAvailability(false);
+  elements.diarizationToggle.addEventListener("change", () => {
+    syncStreamingAvailability(true);
+  });
+  elements.streamingToggle.addEventListener("change", () => {
+    syncStreamingAvailability(true);
   });
 }
 
